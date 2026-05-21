@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 from uuid import UUID
 
-import asyncpg
 from fastapi import Header, Request
 
 from app.infrastructure.repository import EventRepository
 
 
-async def get_db_pool(request: Request) -> asyncpg.Pool:
+async def get_db_pool(request: Request) -> Any:
     return request.app.state.db_pool
 
 
-async def get_repository(pool: asyncpg.Pool = None, request: Request = None) -> EventRepository:
+async def get_repository(pool: Any = None, request: Request = None) -> EventRepository:
     if pool is None:
         pool = request.app.state.db_pool
     return EventRepository(pool)

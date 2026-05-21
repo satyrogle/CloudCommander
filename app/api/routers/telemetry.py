@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
-import asyncpg
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import get_db_pool, get_tenant_id
@@ -31,7 +31,7 @@ async def get_system_backpressure():
 async def get_node_guardrail_state(
     node_id: UUID,
     tenant_id: UUID = Depends(get_tenant_id),
-    pool: asyncpg.Pool = Depends(get_db_pool),
+    pool: Any = Depends(get_db_pool),
 ):
     query = """
         SELECT severity, metric_value, reason, timestamp_utc_ms
@@ -50,7 +50,7 @@ async def get_node_guardrail_state(
 async def get_recent_controller_events(
     limit: int = 10,
     tenant_id: UUID = Depends(get_tenant_id),
-    pool: asyncpg.Pool = Depends(get_db_pool),
+    pool: Any = Depends(get_db_pool),
 ):
     query = """
         SELECT event_id, event_type, payload, timestamp_utc_ms
