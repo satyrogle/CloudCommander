@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudcommander-worker
+  namespace: cloudcommander-staging
+  labels:
+    app: cloudcommander
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudcommander
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: cloudcommander
+        component: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/example/cloudcommander:staging
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "app.worker.projection_worker"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cloudcommander-secrets
+                  key: DATABASE_URL
+            - name: ENVIRONMENT
+              value: staging
+            - name: ADAPTER_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cloudcommander-config
+                  key: ADAPTER_BASE_URL
+            - name: MTLS_CERT_PATH
+              value: /etc/mtls/tls.crt
+            - name: MTLS_KEY_PATH
+              value: /etc/mtls/tls.key
+            - name: MTLS_CA_PATH
+              value: /etc/mtls/ca.crt
+          volumeMounts:
+            - name: mtls-certs
+              mountPath: /etc/mtls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: mtls-certs
+          secret:
+            secretName: cloudcommander-worker-mtls
