@@ -20,6 +20,10 @@ def base_ids():
     }
 
 
+def _claims(action: str, node_id) -> list[str]:
+    return [f"{action}:node:{node_id}"]
+
+
 def test_resource_allocation_transitions_state_correctly(base_ids):
     allocation_event = EventEnvelope(
         event_id=base_ids["event_id"],
@@ -29,6 +33,7 @@ def test_resource_allocation_transitions_state_correctly(base_ids):
         timestamp_utc_ms=1680000000000,
         idempotency_key="req-1",
         actor_id="user-1",
+        actor_claims=_claims("allocate", base_ids["aggregate_id"]),
         expected_version=0,
         payload=ResourceAllocationRequested(
             node_id=base_ids["aggregate_id"],
@@ -55,6 +60,7 @@ def test_frozen_aggregate_rejects_allocation(base_ids):
         timestamp_utc_ms=1680000000000,
         idempotency_key="freeze-1",
         actor_id="system",
+        actor_claims=_claims("freeze", base_ids["aggregate_id"]),
         expected_version=0,
         payload=AggregateFrozen(
             severity="High", drift_details={"reason": "IAM modified externally"}
@@ -70,6 +76,7 @@ def test_frozen_aggregate_rejects_allocation(base_ids):
         timestamp_utc_ms=1680000000100,
         idempotency_key="req-2",
         actor_id="user-1",
+        actor_claims=_claims("allocate", base_ids["aggregate_id"]),
         expected_version=1,
         payload=ResourceAllocationRequested(
             node_id=base_ids["aggregate_id"],
@@ -92,6 +99,7 @@ def test_replay_ignores_past_sequence_ids(base_ids):
         timestamp_utc_ms=1680000000000,
         idempotency_key="req-1",
         actor_id="user-1",
+        actor_claims=_claims("allocate", base_ids["aggregate_id"]),
         expected_version=1,
         payload=ResourceAllocationRequested(
             node_id=base_ids["aggregate_id"],
@@ -110,6 +118,7 @@ def test_replay_ignores_past_sequence_ids(base_ids):
         timestamp_utc_ms=1670000000000,
         idempotency_key="req-old",
         actor_id="user-1",
+        actor_claims=_claims("allocate", base_ids["aggregate_id"]),
         expected_version=0,
         payload=ResourceAllocationRequested(
             node_id=base_ids["aggregate_id"],
@@ -134,6 +143,7 @@ def test_drift_resolve_unfreezes_node(base_ids):
         timestamp_utc_ms=1680000000000,
         idempotency_key="freeze-1",
         actor_id="system",
+        actor_claims=_claims("freeze", base_ids["aggregate_id"]),
         expected_version=0,
         payload=AggregateFrozen(severity="Medium", drift_details={"x": "y"}),
     )
@@ -147,6 +157,7 @@ def test_drift_resolve_unfreezes_node(base_ids):
         timestamp_utc_ms=1680000000200,
         idempotency_key="resolve-1",
         actor_id="operator-1",
+        actor_claims=_claims("resolve", base_ids["aggregate_id"]),
         expected_version=1,
         payload=ExternalDriftResolved(
             resolution_mode="AcceptExternalReality", resolved_by="operator-1"
