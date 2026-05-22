@@ -1,13 +1,29 @@
 from __future__ import annotations
 
+<<<<<<< ours
+<<<<<<< ours
 from typing import List, Optional
+=======
+from typing import List
+>>>>>>> theirs
+=======
+from typing import List
+>>>>>>> theirs
 from uuid import UUID
 
 import asyncpg
 from asyncpg.exceptions import UniqueViolationError
 from pydantic import ValidationError
 
+<<<<<<< ours
+<<<<<<< ours
 from app.domain.schemas import EventEnvelope, ResourceNodeSnapshot
+=======
+from app.domain.schemas import EventEnvelope
+>>>>>>> theirs
+=======
+from app.domain.schemas import EventEnvelope
+>>>>>>> theirs
 from app.security.hash_chain import generate_event_hash, verify_chain
 
 
@@ -29,7 +45,15 @@ class EventRepository:
 
     async def _get_latest_hash(
         self, conn: asyncpg.Connection, tenant_id: UUID, aggregate_id: UUID
+<<<<<<< ours
+<<<<<<< ours
     ) -> Optional[str]:
+=======
+    ) -> str:
+>>>>>>> theirs
+=======
+    ) -> str:
+>>>>>>> theirs
         query = """
             SELECT event_hash
             FROM events
@@ -37,16 +61,38 @@ class EventRepository:
             ORDER BY sequence_id DESC
             LIMIT 1
         """
+<<<<<<< ours
+<<<<<<< ours
         return await conn.fetchval(query, tenant_id, aggregate_id)
+=======
+        result = await conn.fetchval(query, tenant_id, aggregate_id)
+        return result or "genesis_hash"
+>>>>>>> theirs
+=======
+        result = await conn.fetchval(query, tenant_id, aggregate_id)
+        return result or "genesis_hash"
+>>>>>>> theirs
 
     async def append_event_and_enqueue(self, envelope: EventEnvelope) -> None:
         append_query = """
             INSERT INTO events (
                 event_id, tenant_id, aggregate_id, sequence_id,
                 timestamp_utc_ms, idempotency_key, actor_id,
+<<<<<<< ours
+<<<<<<< ours
                 actor_claims, expected_version, event_type, payload,
                 previous_hash, event_hash
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12, $13)
+=======
+                expected_version, event_type, payload,
+                previous_hash, event_hash
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+>>>>>>> theirs
+=======
+                expected_version, event_type, payload,
+                previous_hash, event_hash
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+>>>>>>> theirs
         """
 
         outbox_query = """
@@ -78,7 +124,13 @@ class EventRepository:
                         envelope.timestamp_utc_ms,
                         envelope.idempotency_key,
                         envelope.actor_id,
+<<<<<<< ours
+<<<<<<< ours
                         envelope.actor_claims,
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
                         envelope.expected_version,
                         envelope.payload.event_type,
                         payload_dict,
@@ -105,7 +157,15 @@ class EventRepository:
     ) -> List[EventEnvelope]:
         query = """
             SELECT event_id, tenant_id, aggregate_id, sequence_id,
+<<<<<<< ours
+<<<<<<< ours
                    timestamp_utc_ms, idempotency_key, actor_id, actor_claims,
+=======
+                   timestamp_utc_ms, idempotency_key, actor_id,
+>>>>>>> theirs
+=======
+                   timestamp_utc_ms, idempotency_key, actor_id,
+>>>>>>> theirs
                    expected_version, payload, previous_hash, event_hash
             FROM events
             WHERE tenant_id = $1 AND aggregate_id = $2 AND sequence_id > $3
@@ -126,6 +186,8 @@ class EventRepository:
 
         return [self._map_record_to_envelope(record) for record in records]
 
+<<<<<<< ours
+<<<<<<< ours
     async def get_event_by_id(
         self, conn: asyncpg.Connection, event_id: UUID, tenant_id: UUID
     ) -> Optional[EventEnvelope]:
@@ -194,6 +256,10 @@ class EventRepository:
             snapshot.schema_version,
         )
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
     def _map_record_to_envelope(self, record: asyncpg.Record) -> EventEnvelope:
         try:
             raw_dict = dict(record)

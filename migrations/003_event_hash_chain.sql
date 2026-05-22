@@ -25,6 +25,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_events_genesis_per_aggregate
 ON events(tenant_id, aggregate_id)
 WHERE sequence_id = 1;
 
+<<<<<<< ours
+<<<<<<< ours
 -- Ensure previous_hash references a known event_hash in the same stream
 -- (enforces chain linkage for sequence_id > 1)
 -- NOTE: Foreign keys cannot reference a partial unique index target.
@@ -60,6 +62,25 @@ BEGIN
     DEFERRABLE INITIALLY DEFERRED;
   END IF;
 END $$;
+=======
+=======
+>>>>>>> theirs
+-- Ensure event_hash is unique within a stream so previous_hash can reference it.
+-- NOTE: This must be a full unique CONSTRAINT (not a partial unique index)
+-- because PostgreSQL foreign keys can only target PRIMARY KEY / UNIQUE constraints.
+ALTER TABLE events
+ADD CONSTRAINT uq_events_stream_event_hash
+UNIQUE (tenant_id, aggregate_id, event_hash);
+
+ALTER TABLE events
+ADD CONSTRAINT fk_events_previous_hash
+FOREIGN KEY (tenant_id, aggregate_id, previous_hash)
+REFERENCES events(tenant_id, aggregate_id, event_hash)
+DEFERRABLE INITIALLY DEFERRED;
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
 -- Helpful index for replay verification and audit scans
 CREATE INDEX IF NOT EXISTS idx_events_stream_sequence_hash

@@ -41,3 +41,15 @@ jobs:
         run: |
           chmod +x scripts/ci.sh
           ./scripts/ci.sh
+<<<<<<< ours
+<<<<<<< ours
+=======
+
+      - name: Run Database Migrations
+        run: python -m migrations.run
+>>>>>>> theirs
+=======
+
+      - name: Run Database Migrations
+        run: python -m migrations.run
+>>>>>>> theirs
