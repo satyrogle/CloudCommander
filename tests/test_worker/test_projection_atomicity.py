@@ -9,7 +9,7 @@ from app.security.hash_chain import generate_event_hash
 from app.worker.projection_worker import OutboxWorker
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_projection_and_outbox_status_are_atomic(db_pool, reset_db):
     _ = reset_db
     tenant_id = uuid4()

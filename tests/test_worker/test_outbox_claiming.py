@@ -8,7 +8,7 @@ import pytest
 from app.security.hash_chain import generate_event_hash
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_skip_locked_prevents_duplicate_claims(db_pool: asyncpg.Pool, reset_db):
     _ = reset_db
     tenant_id = uuid4()
