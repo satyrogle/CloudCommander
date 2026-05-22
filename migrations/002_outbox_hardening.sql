@@ -1,7 +1,16 @@
 -- Formalize status constraints
-ALTER TABLE outbox
-ADD CONSTRAINT chk_outbox_status
-CHECK (status IN ('pending', 'processing', 'processed', 'failed', 'dead_letter'));
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_outbox_status'
+          AND conrelid = 'outbox'::regclass
+    ) THEN
+        ALTER TABLE outbox
+        ADD CONSTRAINT chk_outbox_status
+        CHECK (status IN ('pending', 'processing', 'processed', 'failed', 'dead_letter'));
+    END IF;
+END $$;
 
 -- Add columns for retry and error tracking (idempotent guards)
 ALTER TABLE outbox ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;

@@ -11,14 +11,7 @@ spec:
       containers:
         - name: migrate
           image: ghcr.io/example/cloudcommander:staging
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              psql "$DATABASE_URL" -f migrations/001_initial_schema.sql && \
-              psql "$DATABASE_URL" -f migrations/002_outbox_hardening.sql && \
-              psql "$DATABASE_URL" -f migrations/003_event_hash_chain.sql && \
-              psql "$DATABASE_URL" -f migrations/004_read_models_and_outbox_consistency.sql && \
-              psql "$DATABASE_URL" -f migrations/005_event_actor_claims.sql
+          command: ["python", "-m", "migrations.run"]
           env:
             - name: DATABASE_URL
               valueFrom:

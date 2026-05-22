@@ -8,15 +8,11 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from migrations.run import apply_migrations
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-MIGRATIONS = [
-    ROOT_DIR / "migrations" / "001_initial_schema.sql",
-    ROOT_DIR / "migrations" / "002_outbox_hardening.sql",
-    ROOT_DIR / "migrations" / "003_event_hash_chain.sql",
-    ROOT_DIR / "migrations" / "004_read_models_and_outbox_consistency.sql",
-    ROOT_DIR / "migrations" / "005_event_actor_claims.sql",
-]
+MIGRATIONS_DIR = ROOT_DIR / "migrations"
 
 
 RESET_SQL = """
@@ -56,8 +52,7 @@ async def db_pool():
         pytest.skip(f"Postgres is not available for DB-backed tests: {exc}")
 
     async with pool.acquire() as conn:
-        for migration_path in MIGRATIONS:
-            await conn.execute(migration_path.read_text(encoding="utf-8"))
+        await apply_migrations(conn, MIGRATIONS_DIR)
 
     try:
         yield pool

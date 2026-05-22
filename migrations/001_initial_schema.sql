@@ -12,15 +12,33 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE events
-ADD CONSTRAINT uq_aggregate_sequence
-UNIQUE (tenant_id, aggregate_id, sequence_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_aggregate_sequence'
+          AND conrelid = 'events'::regclass
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT uq_aggregate_sequence
+        UNIQUE (tenant_id, aggregate_id, sequence_id);
+    END IF;
+END $$;
 
-ALTER TABLE events
-ADD CONSTRAINT uq_tenant_idempotency
-UNIQUE (tenant_id, idempotency_key);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_tenant_idempotency'
+          AND conrelid = 'events'::regclass
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT uq_tenant_idempotency
+        UNIQUE (tenant_id, idempotency_key);
+    END IF;
+END $$;
 
-CREATE INDEX idx_events_aggregate ON events(tenant_id, aggregate_id, sequence_id);
+CREATE INDEX IF NOT EXISTS idx_events_aggregate ON events(tenant_id, aggregate_id, sequence_id);
 
 CREATE TABLE IF NOT EXISTS outbox (
     outbox_id BIGSERIAL PRIMARY KEY,
@@ -33,4 +51,4 @@ CREATE TABLE IF NOT EXISTS outbox (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_outbox_pending ON outbox(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(status, created_at);

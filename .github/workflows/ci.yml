@@ -41,6 +41,3 @@ jobs:
         run: |
           chmod +x scripts/ci.sh
           ./scripts/ci.sh
-
-      - name: Run Database Migrations
-        run: python -m migrations.run
