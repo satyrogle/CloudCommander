@@ -143,7 +143,7 @@ class OutboxWorker:
             UPDATE outbox
             SET status = 'processed',
                 processed_at = NOW(),
-                error_payload = jsonb_build_object('reconcile_status', $2)
+                error_payload = jsonb_build_object('reconcile_status', $2::text)
             WHERE event_id = $1
             """,
             event_id,
@@ -165,7 +165,7 @@ class OutboxWorker:
             """
             UPDATE outbox
             SET status = $1,
-                error_payload = jsonb_build_object('error', $2)
+                error_payload = jsonb_build_object('error', $2::text)
             WHERE event_id = $3
             """,
             status,
