@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cloudcommander-worker-mtls
+  namespace: cloudcommander-staging
+spec:
+  secretName: cloudcommander-worker-mtls
+  commonName: cloudcommander-worker
+  duration: 2160h # 90 days
+  renewBefore: 360h # 15 days
+  issuerRef:
+    name: cloudcommander-staging-ca
+    kind: ClusterIssuer
+  usages:
+    - digital signature
+    - key encipherment
+    - client auth
