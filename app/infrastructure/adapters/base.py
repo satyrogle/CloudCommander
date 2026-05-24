@@ -18,3 +18,11 @@ class CloudAdapter(ABC):
         }
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def rollback_allocation(self, aggregate_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attempts to compensate or revert infrastructure state.
+        Returns the same standardized status dictionary as apply_allocation.
+        """
+        raise NotImplementedError

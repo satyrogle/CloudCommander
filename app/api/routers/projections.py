@@ -28,9 +28,10 @@ async def get_service_graph_projection(
         ORDER BY source_node_id, target_node_id
     """
     version_query = """
-        SELECT COALESCE(MAX(last_sequence_id), 0)
-        FROM read_model_nodes
-        WHERE tenant_id = $1
+        SELECT GREATEST(
+            COALESCE((SELECT MAX(last_sequence_id) FROM read_model_nodes WHERE tenant_id = $1), 0),
+            COALESCE((SELECT MAX(last_sequence_id) FROM read_model_service_graph_edges WHERE tenant_id = $1), 0)
+        )
     """
     async with pool.acquire() as conn:
         node_records = await conn.fetch(node_query, tenant_id)

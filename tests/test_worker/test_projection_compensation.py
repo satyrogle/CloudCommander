@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.schemas import EventEnvelope, ResourceAllocationRequested
+from app.domain.schemas import DependencyEdgeProposed, EventEnvelope, ResourceAllocationRequested
 from app.worker.projection_worker import OutboxWorker
 
 
@@ -65,11 +65,13 @@ async def test_emit_compensation_followups_appends_compensation_and_rollback_eve
     assert compensation_event.expected_version == 7
     assert compensation_event.payload.event_type == "CompensationStrategySelected"
     assert compensation_event.payload.selected_strategy == "full_revert"
+    assert compensation_event.actor_claims == ["admin"]
 
     assert rollback_event.sequence_id == 9
     assert rollback_event.expected_version == 8
     assert rollback_event.payload.event_type == "RollbackInitiated"
     assert rollback_event.payload.reason_code == "auto-compensation:full_revert"
+    assert rollback_event.actor_claims == ["admin"]
 
 
 def test_extract_compensation_strategy_parses_status():
@@ -77,3 +79,33 @@ def test_extract_compensation_strategy_parses_status():
 
     assert worker._extract_compensation_strategy("compensating_via_full_revert") == "full_revert"
     assert worker._extract_compensation_strategy("completed") is None
+
+
+def test_service_graph_edge_projection_is_derived_from_dependency_event():
+    worker = OutboxWorker(_DummyPool())
+    tenant_id = uuid4()
+    source_node_id = uuid4()
+    target_node_id = uuid4()
+    event = EventEnvelope(
+        event_id=uuid4(),
+        tenant_id=tenant_id,
+        aggregate_id=uuid4(),
+        sequence_id=3,
+        timestamp_utc_ms=1700000000000,
+        idempotency_key="edge-1",
+        actor_id="operator-1",
+        actor_claims=[f"link:node:{source_node_id}"],
+        expected_version=2,
+        payload=DependencyEdgeProposed(
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+        ),
+    )
+
+    projection = worker._compute_service_graph_edge_projection(event)
+
+    assert projection == {
+        "source_node_id": source_node_id,
+        "target_node_id": target_node_id,
+        "last_sequence_id": 3,
+    }

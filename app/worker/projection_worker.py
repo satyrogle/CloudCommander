@@ -14,8 +14,11 @@ from app.api.middleware import backpressure_manager
 from app.control.pid_guardrail import PIDGuardrailController
 from app.domain.reducers import reduce_node
 from app.domain.schemas import (
+    AggregateFrozen,
     CompensationStrategySelected,
+    DependencyEdgeProposed,
     EventEnvelope,
+    ExternalDriftResolved,
     ResourceAllocationRequested,
     RollbackInitiated,
 )
@@ -92,14 +95,14 @@ class OutboxWorker:
                         status IN ('pending', 'failed')
                         AND (
                             last_attempt_at IS NULL
-                            OR last_attempt_at < NOW() - (POWER(2, attempts) * $2::interval)
+                            OR last_attempt_at < NOW() - ((POWER(2, attempts) * $2::double precision) * INTERVAL '1 second')
                         )
                     )
                     OR (
                         status = 'processing'
                         AND (
                             last_attempt_at IS NULL
-                            OR last_attempt_at < NOW() - $3::interval
+                            OR last_attempt_at < NOW() - ($3::double precision * INTERVAL '1 second')
                         )
                     )
                 )
@@ -121,8 +124,8 @@ class OutboxWorker:
                 rows = await conn.fetch(
                     claim_query,
                     batch_size,
-                    f"{RETRY_BACKOFF_BASE_SECONDS} seconds",
-                    f"{PROCESSING_LEASE_TIMEOUT_SECONDS} seconds",
+                    RETRY_BACKOFF_BASE_SECONDS,
+                    PROCESSING_LEASE_TIMEOUT_SECONDS,
                 )
 
         if not rows:
@@ -152,12 +155,23 @@ class OutboxWorker:
                     reconcile_status, reconcile_error
                 )
                 next_state = None
+                edge_projection = None
                 if should_apply_projection:
                     next_state = await self._compute_next_projection_state(conn, event)
+                    edge_projection = self._compute_service_graph_edge_projection(event)
 
                 async with conn.transaction():
                     if next_state is not None:
                         await self.repository.upsert_node_projection(conn, tenant_id, next_state)
+
+                    if edge_projection is not None:
+                        await self.repository.upsert_service_graph_edge(
+                            conn=conn,
+                            tenant_id=tenant_id,
+                            source_node_id=edge_projection["source_node_id"],
+                            target_node_id=edge_projection["target_node_id"],
+                            last_sequence_id=edge_projection["last_sequence_id"],
+                        )
 
                     if guardrail_state is not None and should_apply_projection:
                         await self.repository.insert_guardrail_alert(
@@ -170,7 +184,7 @@ class OutboxWorker:
                             timestamp_utc_ms=guardrail_state["timestamp_utc_ms"],
                         )
 
-                    if reconcile_error is None:
+                    if self._should_mark_processed(reconcile_status, reconcile_error):
                         if compensation_strategy is not None:
                             await self._emit_compensation_followups(
                                 conn=conn,
@@ -179,7 +193,13 @@ class OutboxWorker:
                             )
                         await self._mark_processed(conn, event_id, reconcile_status)
                     else:
-                        await self._mark_failed(conn, event_id, attempts, reconcile_error)
+                        await self._mark_failed(
+                            conn,
+                            event_id,
+                            attempts,
+                            reconcile_error
+                            or f"Reconcile ended with non-success status: {reconcile_status}",
+                        )
 
         except Exception as exc:
             logger.error("Failed processing event %s: %s", event_id, exc)
@@ -195,10 +215,25 @@ class OutboxWorker:
                 )
 
     async def _compute_next_projection_state(self, conn: asyncpg.Connection, event: EventEnvelope):
+        if not isinstance(
+            event.payload,
+            (ResourceAllocationRequested, AggregateFrozen, ExternalDriftResolved),
+        ):
+            return None
+
         current_state = await self.repository.get_node_projection(
             conn, event.tenant_id, event.aggregate_id
         )
         return reduce_node(current_state, event)
+
+    def _compute_service_graph_edge_projection(self, event: EventEnvelope) -> dict | None:
+        if not isinstance(event.payload, DependencyEdgeProposed):
+            return None
+        return {
+            "source_node_id": event.payload.source_node_id,
+            "target_node_id": event.payload.target_node_id,
+            "last_sequence_id": event.sequence_id,
+        }
 
     def _observe_guardrail_state(self, event: EventEnvelope) -> dict | None:
         if isinstance(event.payload, ResourceAllocationRequested):
@@ -247,6 +282,16 @@ class OutboxWorker:
                 return status, None
             except Exception as exc:
                 return "retry_scheduled", str(exc)
+        if isinstance(event.payload, RollbackInitiated):
+            try:
+                status = await self.reconciler.execute_rollback(
+                    str(event.event_id),
+                    str(event.aggregate_id),
+                    event.payload.model_dump(mode="json"),
+                )
+                return status, None
+            except Exception as exc:
+                return "retry_scheduled", str(exc)
         return "not_applicable", None
 
     def _extract_compensation_strategy(self, reconcile_status: str) -> Optional[str]:
@@ -262,6 +307,15 @@ class OutboxWorker:
         if reconcile_error is not None:
             return False
         return reconcile_status in {"completed", "not_applicable"}
+
+    def _should_mark_processed(
+        self, reconcile_status: str, reconcile_error: str | None
+    ) -> bool:
+        if reconcile_error is not None:
+            return False
+        return reconcile_status in {"completed", "rollback_completed", "not_applicable"} or (
+            self._extract_compensation_strategy(reconcile_status) is not None
+        )
 
     async def _emit_compensation_followups(
         self,
@@ -283,7 +337,7 @@ class OutboxWorker:
             timestamp_utc_ms=now_ms,
             idempotency_key=f"compensation-{source_event.event_id}",
             actor_id="worker-compensator",
-            actor_claims=[],
+            actor_claims=["admin"],
             expected_version=base_sequence,
             payload=CompensationStrategySelected(
                 intent_id=str(source_event.event_id),
@@ -302,7 +356,7 @@ class OutboxWorker:
             timestamp_utc_ms=now_ms + 1,
             idempotency_key=f"rollback-{source_event.event_id}",
             actor_id="worker-compensator",
-            actor_claims=[],
+            actor_claims=["admin"],
             expected_version=base_sequence + 1,
             payload=RollbackInitiated(
                 target_node_id=source_event.aggregate_id,

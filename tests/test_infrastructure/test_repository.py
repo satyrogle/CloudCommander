@@ -27,13 +27,26 @@ class _TxCtx:
 
 
 class _FakeConn:
-    def __init__(self, *, latest_hash: str | None = None, execute_side_effect=None):
+    def __init__(
+        self,
+        *,
+        latest_hash: str | None = None,
+        latest_sequence: int = 0,
+        execute_side_effect=None,
+    ):
         self.latest_hash = latest_hash
+        self.latest_sequence = latest_sequence
         self.execute_side_effect = execute_side_effect
         self.executed: list[tuple[str, tuple]] = []
 
     async def fetchval(self, query, tenant_id, aggregate_id):
         return self.latest_hash
+
+    async def fetchrow(self, query, tenant_id, aggregate_id):
+        _ = query, tenant_id, aggregate_id
+        if self.latest_hash is None:
+            return None
+        return {"sequence_id": self.latest_sequence, "event_hash": self.latest_hash}
 
     async def execute(self, query, *args):
         self.executed.append((query, args))
@@ -111,7 +124,7 @@ async def test_append_raises_idempotency_conflict(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_append_writes_hash_fields_and_enqueues_outbox(monkeypatch):
-    conn = _FakeConn(latest_hash="a" * 64)
+    conn = _FakeConn(latest_hash="a" * 64, latest_sequence=1)
     repo = EventRepository(_FakePool(conn))
 
     captured_hash_args = {}
@@ -149,3 +162,15 @@ async def test_append_writes_hash_fields_and_enqueues_outbox(monkeypatch):
 
     assert "INSERT INTO outbox" in outbox_query
     assert outbox_args == (envelope.event_id, envelope.tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_append_rejects_non_contiguous_expected_version():
+    conn = _FakeConn(latest_hash="a" * 64, latest_sequence=1)
+    repo = EventRepository(_FakePool(conn))
+    envelope = _envelope(sequence_id=6)
+
+    with pytest.raises(ConcurrencyConflictError, match="Expected version"):
+        await repo.append_event_and_enqueue(envelope)
+
+    assert conn.executed == []

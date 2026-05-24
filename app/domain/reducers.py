@@ -5,10 +5,12 @@ from typing import Optional
 from app.security.rbac_policy import verify_permission
 from .schemas import (
     AggregateFrozen,
+    DependencyEdgeProposed,
     EventEnvelope,
     ExternalDriftResolved,
     ResourceAllocationRequested,
     ResourceNodeSnapshot,
+    RollbackInitiated,
 )
 
 
@@ -52,5 +54,11 @@ def reduce_node(
         if state.lifecycle_state != "frozen":
             raise InvalidStateTransitionError("Cannot resolve drift on an unfrozen node.")
         updates["lifecycle_state"] = "active"
+
+    elif isinstance(payload, DependencyEdgeProposed):
+        verify_permission(envelope.actor_claims, "link", payload.source_node_id)
+
+    elif isinstance(payload, RollbackInitiated):
+        verify_permission(envelope.actor_claims, "rollback", payload.target_node_id)
 
     return state.model_copy(update=updates)

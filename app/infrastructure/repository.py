@@ -27,18 +27,6 @@ class EventRepository:
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
 
-    async def _get_latest_hash(
-        self, conn: asyncpg.Connection, tenant_id: UUID, aggregate_id: UUID
-    ) -> Optional[str]:
-        query = """
-            SELECT event_hash
-            FROM events
-            WHERE tenant_id = $1 AND aggregate_id = $2
-            ORDER BY sequence_id DESC
-            LIMIT 1
-        """
-        return await conn.fetchval(query, tenant_id, aggregate_id)
-
     async def get_stream_head(
         self, conn: asyncpg.Connection, tenant_id: UUID, aggregate_id: UUID
     ) -> tuple[int, Optional[str]]:
@@ -72,9 +60,18 @@ class EventRepository:
         """
 
         payload_dict = envelope.payload.model_dump(mode="json")
-        previous_hash = await self._get_latest_hash(
+        head_sequence, previous_hash = await self.get_stream_head(
             conn, envelope.tenant_id, envelope.aggregate_id
         )
+        if envelope.expected_version != head_sequence:
+            raise ConcurrencyConflictError(
+                f"Expected version {envelope.expected_version} does not match current stream version {head_sequence}."
+            )
+        if envelope.sequence_id != head_sequence + 1:
+            raise ConcurrencyConflictError(
+                f"Sequence {envelope.sequence_id} must directly follow current stream version {head_sequence}."
+            )
+
         event_hash = generate_event_hash(
             previous_hash=previous_hash,
             payload=payload_dict,
@@ -247,6 +244,31 @@ class EventRepository:
             metric_value,
             reason,
             timestamp_utc_ms,
+        )
+
+    async def upsert_service_graph_edge(
+        self,
+        conn: asyncpg.Connection,
+        tenant_id: UUID,
+        source_node_id: UUID,
+        target_node_id: UUID,
+        last_sequence_id: int,
+    ) -> None:
+        query = """
+            INSERT INTO read_model_service_graph_edges (
+                tenant_id, source_node_id, target_node_id, last_sequence_id, updated_at
+            ) VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (tenant_id, source_node_id, target_node_id) DO UPDATE
+            SET last_sequence_id = EXCLUDED.last_sequence_id,
+                updated_at = NOW()
+            WHERE read_model_service_graph_edges.last_sequence_id < EXCLUDED.last_sequence_id
+        """
+        await conn.execute(
+            query,
+            tenant_id,
+            source_node_id,
+            target_node_id,
+            last_sequence_id,
         )
 
     def _map_record_to_envelope(self, record: asyncpg.Record) -> EventEnvelope:

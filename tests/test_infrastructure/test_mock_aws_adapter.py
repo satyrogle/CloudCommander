@@ -35,3 +35,13 @@ async def test_mock_adapter_chaos_mode_emits_transient_failures():
         statuses.append(result["status"])
 
     assert any(status in {"partial_failure", "throttled", "timeout"} for status in statuses)
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_rollback_success_path():
+    adapter = MockAWSAdapter()
+
+    result = await adapter.rollback_allocation("agg-1", {"reason_code": "auto-compensation"})
+
+    assert result["status"] == "success"
+    assert "Rollback OK" in result["provider_message"]

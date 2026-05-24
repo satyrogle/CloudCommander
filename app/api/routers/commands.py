@@ -36,6 +36,38 @@ def _graph_aggregate_id(tenant_id: UUID) -> UUID:
     return uuid3(NAMESPACE_URL, f"service-graph:{tenant_id}")
 
 
+def _assert_dependency_edge_is_acyclic(
+    existing_events: list[EventEnvelope],
+    proposed_edge: DependencyEdgeProposed,
+) -> None:
+    if proposed_edge.source_node_id == proposed_edge.target_node_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Dependency edge would create a cycle.",
+        )
+
+    adjacency: dict[UUID, set[UUID]] = {}
+    for event in existing_events:
+        if isinstance(event.payload, DependencyEdgeProposed):
+            adjacency.setdefault(event.payload.source_node_id, set()).add(
+                event.payload.target_node_id
+            )
+
+    stack = [proposed_edge.target_node_id]
+    visited: set[UUID] = set()
+    while stack:
+        node_id = stack.pop()
+        if node_id == proposed_edge.source_node_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Dependency edge would create a cycle.",
+            )
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        stack.extend(adjacency.get(node_id, set()))
+
+
 async def validate_and_append(
     repository: EventRepository,
     envelope: EventEnvelope,
@@ -53,7 +85,10 @@ async def validate_and_append(
     except InvalidStateTransitionError as e:
         if "frozen" in str(e).lower():
             raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=str(e))
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if isinstance(envelope.payload, DependencyEdgeProposed):
+        _assert_dependency_edge_is_acyclic(events, envelope.payload)
 
     try:
         await repository.append_event_and_enqueue(envelope)

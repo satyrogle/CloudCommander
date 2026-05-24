@@ -128,3 +128,24 @@ class MockAWSAdapter(CloudAdapter):
             "nodes_failed": 0,
             "provider_message": "OK",
         }
+
+    async def rollback_allocation(self, aggregate_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        _ = aggregate_id
+        reason_code = payload.get("reason_code", "")
+
+        if reason_code == "trigger-rollback-timeout":
+            await asyncio.sleep(0.1)
+            return {
+                "status": "timeout",
+                "nodes_success": 0,
+                "nodes_failed": 4,
+                "provider_message": "Rollback connection timed out",
+            }
+
+        await asyncio.sleep(0.1)
+        return {
+            "status": "success",
+            "nodes_success": 4,
+            "nodes_failed": 0,
+            "provider_message": "Rollback OK",
+        }

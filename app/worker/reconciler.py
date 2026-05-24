@@ -47,6 +47,26 @@ class ReconcilerLoop:
 
         return "failed"
 
+    async def execute_rollback(self, event_id: str, aggregate_id: str, payload: Dict[str, Any]) -> str:
+        logger.info("Reconciler dispatching rollback for %s", aggregate_id)
+
+        result = await self.adapter.rollback_allocation(aggregate_id, payload)
+        self.decision_engine.observe_evidence(result["status"])
+
+        if result["status"] == "success":
+            logger.info("Rollback %s succeeded.", event_id)
+            return "rollback_completed"
+
+        if result["status"] in ["throttled", "timeout"]:
+            logger.warning(
+                "Rollback %s hit transient failure: %s. Will retry via outbox.",
+                event_id,
+                result["status"],
+            )
+            raise Exception(f"Transient adapter failure: {result['status']}")
+
+        return "failed"
+
     async def _handle_partial_failure(
         self, event_id: str, aggregate_id: str, context: Dict[str, Any]
     ) -> str:

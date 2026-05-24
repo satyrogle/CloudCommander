@@ -177,6 +177,79 @@ async def test_reconcile_error_does_not_advance_projection(db_pool, reset_db):
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_hard_reconcile_failure_marks_outbox_failed(db_pool, reset_db):
+    _ = reset_db
+    tenant_id = uuid4()
+    node_id = uuid4()
+    event_id = uuid4()
+    payload = {
+        "event_type": "ResourceAllocationRequested",
+        "node_id": str(node_id),
+        "target_cpu_cores": 3.0,
+        "target_memory_gb": 6.0,
+        "reason_code": "hard-failure",
+    }
+    timestamp_utc_ms = 1680000000200
+    event_hash = generate_event_hash(
+        None,
+        payload,
+        timestamp_utc_ms,
+        1,
+        tenant_id=tenant_id,
+        aggregate_id=node_id,
+    )
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO events (
+                event_id, tenant_id, aggregate_id, sequence_id, timestamp_utc_ms,
+                idempotency_key, actor_id, actor_claims, expected_version, event_type,
+                payload, previous_hash, event_hash
+            ) VALUES ($1, $2, $3, 1, $4, 'idem-hard-fail', 'operator-1', $5::jsonb, 0, 'ResourceAllocationRequested', $6::jsonb, NULL, $7)
+            """,
+            event_id,
+            tenant_id,
+            node_id,
+            timestamp_utc_ms,
+            json.dumps([f"allocate:node:{node_id}"]),
+            json.dumps(payload),
+            event_hash,
+        )
+        await conn.execute(
+            "INSERT INTO outbox (event_id, tenant_id, status) VALUES ($1, $2, 'pending')",
+            event_id,
+            tenant_id,
+        )
+
+    worker = OutboxWorker(db_pool)
+
+    async def _mock_evaluate_reconcile(event):
+        _ = event
+        return "failed", None
+
+    worker._evaluate_reconcile = _mock_evaluate_reconcile
+
+    processed = await worker.process_next_batch(batch_size=1)
+    assert processed is True
+
+    async with db_pool.acquire() as conn:
+        node_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM read_model_nodes WHERE tenant_id = $1 AND node_id = $2",
+            tenant_id,
+            node_id,
+        )
+        outbox = await conn.fetchrow(
+            "SELECT status, error_payload FROM outbox WHERE event_id = $1",
+            event_id,
+        )
+
+    assert node_count == 0
+    assert outbox["status"] == "failed"
+    assert "non-success status" in outbox["error_payload"]["error"]
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_replayed_event_is_idempotent_for_projection(db_pool, reset_db):
     _ = reset_db
     tenant_id = uuid4()

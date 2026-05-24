@@ -5,10 +5,13 @@ import pytest
 from app.domain.reducers import InvalidStateTransitionError, reduce_node
 from app.domain.schemas import (
     AggregateFrozen,
+    DependencyEdgeProposed,
     EventEnvelope,
     ExternalDriftResolved,
     ResourceAllocationRequested,
+    RollbackInitiated,
 )
+from app.security.rbac_policy import UnauthorizedStateTransitionError
 
 
 @pytest.fixture
@@ -166,3 +169,48 @@ def test_drift_resolve_unfreezes_node(base_ids):
 
     next_state = reduce_node(state, resolve_event)
     assert next_state.lifecycle_state == "active"
+
+
+def test_dependency_edge_requires_link_claim(base_ids):
+    source_node_id = uuid4()
+    target_node_id = uuid4()
+    event = EventEnvelope(
+        event_id=uuid4(),
+        tenant_id=base_ids["tenant_id"],
+        aggregate_id=base_ids["aggregate_id"],
+        sequence_id=1,
+        timestamp_utc_ms=1680000000000,
+        idempotency_key="edge-1",
+        actor_id="user-1",
+        actor_claims=[],
+        expected_version=0,
+        payload=DependencyEdgeProposed(
+            source_node_id=source_node_id,
+            target_node_id=target_node_id,
+        ),
+    )
+
+    with pytest.raises(UnauthorizedStateTransitionError, match="link"):
+        reduce_node(None, event)
+
+
+def test_rollback_requires_rollback_claim(base_ids):
+    event = EventEnvelope(
+        event_id=uuid4(),
+        tenant_id=base_ids["tenant_id"],
+        aggregate_id=base_ids["aggregate_id"],
+        sequence_id=1,
+        timestamp_utc_ms=1680000000000,
+        idempotency_key="rollback-1",
+        actor_id="user-1",
+        actor_claims=[],
+        expected_version=0,
+        payload=RollbackInitiated(
+            target_node_id=base_ids["aggregate_id"],
+            target_sequence_id=0,
+            reason_code="test",
+        ),
+    )
+
+    with pytest.raises(UnauthorizedStateTransitionError, match="rollback"):
+        reduce_node(None, event)
