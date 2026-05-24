@@ -11,6 +11,7 @@ from app.api.middleware import BackpressureMiddleware
 from app.api.routers.commands import router as commands_router
 from app.api.routers.projections import router as projections_router
 from app.api.routers.telemetry import router as telemetry_router
+from app.infrastructure.asyncpg_codecs import configure_json_codecs
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
             min_size=1,
             max_size=10,
             command_timeout=30,
+            init=configure_json_codecs,
         )
         logger.info("Database pool initialized.")
     else:

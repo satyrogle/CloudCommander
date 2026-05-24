@@ -8,6 +8,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.infrastructure.asyncpg_codecs import configure_json_codecs
 from migrations.run import apply_migrations
 
 
@@ -47,7 +48,12 @@ async def db_pool():
     """Provide an asyncpg pool with migrated schema for integration tests."""
     dsn = os.getenv("TEST_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
     try:
-        pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=4)
+        pool = await asyncpg.create_pool(
+            dsn=dsn,
+            min_size=1,
+            max_size=4,
+            init=configure_json_codecs,
+        )
     except Exception as exc:
         pytest.skip(f"Postgres is not available for DB-backed tests: {exc}")
 

@@ -23,6 +23,7 @@ from app.domain.schemas import (
     RollbackInitiated,
 )
 from app.infrastructure.adapters.mock_aws import MockAWSAdapter
+from app.infrastructure.asyncpg_codecs import configure_json_codecs
 from app.infrastructure.repository import DataCorruptionError, EventRepository
 from app.worker.reconciler import ReconcilerLoop
 
@@ -427,6 +428,7 @@ async def create_pool_from_env() -> asyncpg.Pool:
         min_size=1,
         max_size=10,
         command_timeout=30,
+        init=configure_json_codecs,
     )
 
 

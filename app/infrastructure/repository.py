@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 from uuid import UUID
 
@@ -150,7 +151,7 @@ class EventRepository:
             records = await conn.fetch(query, tenant_id, aggregate_id, after_sequence_id)
 
         for record in records:
-            payload_dict = record["payload"]
+            payload_dict = self._normalize_json(record["payload"])
             verify_chain(
                 previous_hash=record["previous_hash"],
                 current_hash=record["event_hash"],
@@ -181,7 +182,7 @@ class EventRepository:
         verify_chain(
             previous_hash=record["previous_hash"],
             current_hash=record["event_hash"],
-            payload=record["payload"],
+            payload=self._normalize_json(record["payload"]),
             timestamp_ms=record["timestamp_utc_ms"],
             sequence_id=record["sequence_id"],
             tenant_id=record["tenant_id"],
@@ -288,8 +289,14 @@ class EventRepository:
             raw_dict = dict(record)
             raw_dict.pop("previous_hash", None)
             raw_dict.pop("event_hash", None)
+            raw_dict["payload"] = self._normalize_json(raw_dict["payload"])
             return EventEnvelope.model_validate(raw_dict)
         except ValidationError as e:
             raise DataCorruptionError(
                 f"Failed to rehydrate event {record['event_id']}: {str(e)}"
             )
+
+    def _normalize_json(self, value):
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
