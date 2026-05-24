@@ -194,6 +194,31 @@ class EventRepository:
             snapshot.schema_version,
         )
 
+    async def insert_guardrail_alert(
+        self,
+        conn: asyncpg.Connection,
+        tenant_id: UUID,
+        node_id: UUID,
+        severity: str,
+        metric_value: float,
+        reason: str,
+        timestamp_utc_ms: int,
+    ) -> None:
+        query = """
+            INSERT INTO read_model_guardrail_alerts (
+                tenant_id, node_id, severity, metric_value, reason, timestamp_utc_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+        """
+        await conn.execute(
+            query,
+            tenant_id,
+            node_id,
+            severity,
+            metric_value,
+            reason,
+            timestamp_utc_ms,
+        )
+
     def _map_record_to_envelope(self, record: asyncpg.Record) -> EventEnvelope:
         try:
             raw_dict = dict(record)

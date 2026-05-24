@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
+import time
 from uuid import UUID
 
 import asyncpg
@@ -19,8 +21,36 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
 POLL_INTERVAL_SEC = 1.0
+MAX_CPU_CORES_FOR_GUARDRAIL = 16.0
+
+GUARDRAIL_SEVERITY_BY_LABEL = {
+    "stable": "normal",
+    "drifting": "warning",
+    "volatile": "approval_required",
+}
 
 pid_controller = PIDGuardrailController(kp=0.5, ki=0.1, kd=0.2, setpoint=0.8)
+
+
+def _termination_signals() -> list[signal.Signals]:
+    signals = [signal.SIGINT]
+    if hasattr(signal, "SIGTERM"):
+        signals.append(signal.SIGTERM)
+    return signals
+
+
+def _install_shutdown_handlers(stop_event: asyncio.Event) -> None:
+    loop = asyncio.get_running_loop()
+
+    def request_stop() -> None:
+        logger.info("Shutdown requested; stopping outbox worker.")
+        stop_event.set()
+
+    for sig in _termination_signals():
+        try:
+            loop.add_signal_handler(sig, request_stop)
+        except (NotImplementedError, RuntimeError):
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(request_stop))
 
 
 class OutboxWorker:
@@ -91,12 +121,24 @@ class OutboxWorker:
                         f"Missing event {event_id} for tenant {tenant_id} referenced by outbox."
                     )
 
+                guardrail_state = self._observe_guardrail_state(event)
                 reconcile_status, reconcile_error = await self._evaluate_reconcile(event)
                 next_state = await self._compute_next_projection_state(conn, event)
 
                 async with conn.transaction():
                     if next_state is not None:
                         await self.repository.upsert_node_projection(conn, tenant_id, next_state)
+
+                    if guardrail_state is not None:
+                        await self.repository.insert_guardrail_alert(
+                            conn=conn,
+                            tenant_id=tenant_id,
+                            node_id=guardrail_state["node_id"],
+                            severity=guardrail_state["severity"],
+                            metric_value=guardrail_state["metric_value"],
+                            reason=guardrail_state["reason"],
+                            timestamp_utc_ms=guardrail_state["timestamp_utc_ms"],
+                        )
 
                     if reconcile_error is None:
                         await self._mark_processed(conn, event_id, reconcile_status)
@@ -116,14 +158,44 @@ class OutboxWorker:
         )
         return reduce_node(current_state, event)
 
-    async def _evaluate_reconcile(self, event: EventEnvelope) -> tuple[str, str | None]:
+    def _observe_guardrail_state(self, event: EventEnvelope) -> dict | None:
         if isinstance(event.payload, ResourceAllocationRequested):
-            max_limit_cores = 16.0
-            current_utilization = event.payload.target_cpu_cores / max_limit_cores
-            pid_controller.observe_resource_change(
+            current_utilization = event.payload.target_cpu_cores / MAX_CPU_CORES_FOR_GUARDRAIL
+            control_signal = pid_controller.observe_resource_change(
                 current_utilization=current_utilization,
                 aggregate_id=str(event.aggregate_id),
             )
+            fuzzy_state = pid_controller.classify_instability(control_signal)
+            label = fuzzy_state["label"]
+            if fuzzy_state["label"] == "drifting":
+                logger.warning(
+                    "Guardrail drift detected for aggregate %s: degree=%.2f signal_abs=%.3f",
+                    event.aggregate_id,
+                    fuzzy_state["degree"],
+                    fuzzy_state["control_signal_abs"],
+                )
+            elif fuzzy_state["label"] == "volatile":
+                logger.critical(
+                    "Guardrail volatility detected for aggregate %s: degree=%.2f signal_abs=%.3f",
+                    event.aggregate_id,
+                    fuzzy_state["degree"],
+                    fuzzy_state["control_signal_abs"],
+                )
+            severity = GUARDRAIL_SEVERITY_BY_LABEL.get(label, "warning")
+            return {
+                "node_id": event.aggregate_id,
+                "severity": severity,
+                "metric_value": float(fuzzy_state["control_signal_abs"]),
+                "reason": (
+                    f"pid_state={label} degree={fuzzy_state['degree']:.2f} "
+                    f"signal_abs={fuzzy_state['control_signal_abs']:.3f}"
+                ),
+                "timestamp_utc_ms": int(time.time() * 1000),
+            }
+        return None
+
+    async def _evaluate_reconcile(self, event: EventEnvelope) -> tuple[str, str | None]:
+        if isinstance(event.payload, ResourceAllocationRequested):
             try:
                 status = await self.reconciler.execute_intent(
                     str(event.event_id),
@@ -190,6 +262,7 @@ async def main() -> None:
     pool = await create_pool_from_env()
     worker = OutboxWorker(pool)
     stop_event = asyncio.Event()
+    _install_shutdown_handlers(stop_event)
 
     try:
         await worker.run(stop_event=stop_event)

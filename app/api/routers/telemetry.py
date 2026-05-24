@@ -13,17 +13,14 @@ router = APIRouter(prefix="/api/v1/telemetry", tags=["Telemetry"])
 
 @router.get("/system/backpressure")
 async def get_system_backpressure():
-    is_overloaded = await backpressure_manager.is_overloaded()
-    lambda_rate = len(backpressure_manager.arrivals) / backpressure_manager.window_seconds
-    mu_rate = len(backpressure_manager.completions) / backpressure_manager.window_seconds
-    rho = (lambda_rate / mu_rate) if mu_rate > 0 else (1.0 if lambda_rate > 0 else 0.0)
+    snapshot = await backpressure_manager.get_snapshot()
 
     return {
-        "status": "overloaded" if is_overloaded else "healthy",
-        "utilization_rho": round(rho, 4),
-        "arrival_rate_hz": round(lambda_rate, 2),
-        "service_rate_hz": round(mu_rate, 2),
-        "limit_rho": backpressure_manager.limit_rho,
+        "status": "overloaded" if snapshot["is_overloaded"] else "healthy",
+        "utilization_rho": round(snapshot["utilization_rho"], 4),
+        "arrival_rate_hz": round(snapshot["arrival_rate_hz"], 2),
+        "service_rate_hz": round(snapshot["service_rate_hz"], 2),
+        "limit_rho": snapshot["limit_rho"],
     }
 
 

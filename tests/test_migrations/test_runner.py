@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from migrations.run import apply_migrations, migration_checksum
+from migrations.run import (
+    MIGRATIONS_ADVISORY_LOCK_KEY,
+    apply_migrations,
+    migration_checksum,
+)
 
 
 class _Tx:
@@ -17,8 +21,12 @@ class _FakeConn:
     def __init__(self, applied: dict[str, str] | None = None):
         self.applied = applied or {}
         self.executed_sql: list[str] = []
+        self.lock_calls: list[tuple[str, int]] = []
 
     async def execute(self, sql: str, *args):
+        if "pg_advisory_lock" in sql or "pg_advisory_unlock" in sql:
+            self.lock_calls.append((sql, args[0]))
+            return
         if "INSERT INTO schema_migrations" in sql:
             filename, checksum = args
             self.applied[filename] = checksum
@@ -49,6 +57,12 @@ async def test_apply_migrations_tracks_files_and_skips_second_run(tmp_path):
     assert first == ["001_initial.sql"]
     assert second == []
     assert len(conn.executed_sql) == 1
+    assert conn.lock_calls == [
+        ("SELECT pg_advisory_lock($1)", MIGRATIONS_ADVISORY_LOCK_KEY),
+        ("SELECT pg_advisory_unlock($1)", MIGRATIONS_ADVISORY_LOCK_KEY),
+        ("SELECT pg_advisory_lock($1)", MIGRATIONS_ADVISORY_LOCK_KEY),
+        ("SELECT pg_advisory_unlock($1)", MIGRATIONS_ADVISORY_LOCK_KEY),
+    ]
 
 
 @pytest.mark.asyncio
@@ -62,3 +76,8 @@ async def test_apply_migrations_rejects_checksum_drift(tmp_path):
 
     with pytest.raises(RuntimeError, match="different checksum"):
         await apply_migrations(conn, tmp_path)
+
+    assert conn.lock_calls[-1] == (
+        "SELECT pg_advisory_unlock($1)",
+        MIGRATIONS_ADVISORY_LOCK_KEY,
+    )

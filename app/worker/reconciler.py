@@ -8,23 +8,27 @@ from app.infrastructure.adapters.base import CloudAdapter
 
 logger = logging.getLogger(__name__)
 
-maut_engine = RollbackDecisionEngine(
-    weights={
-        "restore_time_normalized": 0.5,
-        "operational_risk_normalized": 0.3,
-        "infrastructure_cost_normalized": 0.2,
-    }
-)
+DEFAULT_MAUT_WEIGHTS = {
+    "restore_time_normalized": 0.5,
+    "operational_risk_normalized": 0.3,
+    "infrastructure_cost_normalized": 0.2,
+}
 
 
 class ReconcilerLoop:
-    def __init__(self, adapter: CloudAdapter):
+    def __init__(
+        self,
+        adapter: CloudAdapter,
+        decision_engine: RollbackDecisionEngine | None = None,
+    ):
         self.adapter = adapter
+        self.decision_engine = decision_engine or RollbackDecisionEngine(weights=DEFAULT_MAUT_WEIGHTS)
 
     async def execute_intent(self, event_id: str, aggregate_id: str, payload: Dict[str, Any]) -> str:
         logger.info("Reconciler dispatching intent for %s", aggregate_id)
 
         result = await self.adapter.apply_allocation(aggregate_id, payload)
+        self.decision_engine.observe_evidence(result["status"])
 
         if result["status"] == "success":
             logger.info("Intent %s succeeded.", event_id)
@@ -71,7 +75,12 @@ class ReconcilerLoop:
             },
         ]
 
-        best_strategy = maut_engine.evaluate_rollback_paths(available_paths)
-        logger.info("MAUT selected compensation strategy: %s", best_strategy)
+        best_strategy = self.decision_engine.evaluate_rollback_paths(available_paths)
+        logger.info(
+            "MAUT selected compensation strategy: %s with weights=%s posterior_infra_risk=%.3f",
+            best_strategy,
+            self.decision_engine.get_effective_weights(),
+            self.decision_engine.posterior_infra_risk,
+        )
 
         return f"compensating_via_{best_strategy}"
