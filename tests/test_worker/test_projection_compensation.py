@@ -11,12 +11,17 @@ class _DummyPool:
 
 
 class _CaptureRepo:
-    def __init__(self):
+    def __init__(self, existing_idempotency_keys=None):
         self.appended = []
+        self.existing_idempotency_keys = set(existing_idempotency_keys or [])
 
     async def get_stream_head(self, conn, tenant_id, aggregate_id):
         _ = conn, tenant_id, aggregate_id
         return 7, "h" * 64
+
+    async def has_idempotency_key(self, conn, tenant_id, idempotency_key):
+        _ = conn, tenant_id
+        return idempotency_key in self.existing_idempotency_keys
 
     async def append_event_and_enqueue_in_transaction(self, conn, envelope):
         _ = conn
@@ -72,6 +77,24 @@ async def test_emit_compensation_followups_appends_compensation_and_rollback_eve
     assert rollback_event.payload.event_type == "RollbackInitiated"
     assert rollback_event.payload.reason_code == "auto-compensation:full_revert"
     assert rollback_event.actor_claims == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_emit_compensation_followups_is_idempotent_for_replay():
+    worker = OutboxWorker(_DummyPool())
+    source_event = _source_event()
+    repo = _CaptureRepo(
+        existing_idempotency_keys={f"compensation-{source_event.event_id}"}
+    )
+    worker.repository = repo
+
+    await worker._emit_compensation_followups(
+        conn=object(),
+        source_event=source_event,
+        strategy_id="full_revert",
+    )
+
+    assert repo.appended == []
 
 
 def test_extract_compensation_strategy_parses_status():

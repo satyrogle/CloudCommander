@@ -199,6 +199,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/BackpressureTelemetry'
 
+  /api/v1/telemetry/system/reconciler:
+    get:
+      summary: Return reconciler circuit breaker telemetry
+      responses:
+        '200':
+          description: Reconciler circuit breaker state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcilerTelemetry'
+
+  /api/v1/telemetry/graph/centrality:
+    get:
+      summary: Return graph blast-radius centrality scores
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Ranked graph centrality scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GraphCentralityNode'
+
   /api/v1/telemetry/nodes/{node_id}/guardrail-state:
     get:
       summary: Return latest guardrail alert for node
@@ -447,6 +473,12 @@ components:
         - utilization_rho
         - arrival_rate_hz
         - service_rate_hz
+        - raw_arrival_rate_hz
+        - raw_service_rate_hz
+        - raw_utilization_rho
+        - ema_arrival_rate_hz
+        - ema_service_rate_hz
+        - ema_utilization_rho
         - limit_rho
       properties:
         status:
@@ -458,8 +490,67 @@ components:
           type: number
         service_rate_hz:
           type: number
+        raw_arrival_rate_hz:
+          type: number
+          minimum: 0
+        raw_service_rate_hz:
+          type: number
+          minimum: 0
+        raw_utilization_rho:
+          type: number
+          minimum: 0
+        ema_arrival_rate_hz:
+          type: number
+          minimum: 0
+        ema_service_rate_hz:
+          type: number
+          minimum: 0
+        ema_utilization_rho:
+          type: number
+          minimum: 0
         limit_rho:
           type: number
+
+    ReconcilerTelemetry:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - recent_failure_count
+        - opened_at
+        - next_retry_at
+      properties:
+        state:
+          type: string
+          enum: [closed, open, half_open]
+        recent_failure_count:
+          type: integer
+          minimum: 0
+        opened_at:
+          type: number
+          nullable: true
+        next_retry_at:
+          type: number
+          nullable: true
+
+    GraphCentralityNode:
+      type: object
+      additionalProperties: false
+      required:
+        - node_id
+        - centrality_score
+        - rank
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        centrality_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        rank:
+          type: integer
+          minimum: 1
 
     GuardrailState:
       type: object

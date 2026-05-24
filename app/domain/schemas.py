@@ -150,3 +150,30 @@ class RollbackCommandPayload(DomainBaseModel):
     target_aggregate_id: UUID
     target_sequence_id: int = Field(ge=0)
     reason_code: str = Field(min_length=1, max_length=100)
+
+
+class GraphCentralityNode(DomainBaseModel):
+    node_id: UUID
+    centrality_score: float = Field(ge=0.0, le=1.0)
+    rank: int = Field(ge=1)
+
+
+class BackpressureTelemetry(DomainBaseModel):
+    status: Literal["healthy", "overloaded"]
+    utilization_rho: float = Field(ge=0.0)
+    arrival_rate_hz: float = Field(ge=0.0)
+    service_rate_hz: float = Field(ge=0.0)
+    raw_arrival_rate_hz: float = Field(ge=0.0)
+    raw_service_rate_hz: float = Field(ge=0.0)
+    raw_utilization_rho: float = Field(ge=0.0)
+    ema_arrival_rate_hz: float = Field(ge=0.0)
+    ema_service_rate_hz: float = Field(ge=0.0)
+    ema_utilization_rho: float = Field(ge=0.0)
+    limit_rho: float = Field(ge=0.0)
+
+
+class ReconcilerTelemetry(DomainBaseModel):
+    state: Literal["closed", "open", "half_open"]
+    recent_failure_count: int = Field(ge=0)
+    opened_at: float | None = None
+    next_retry_at: float | None = None

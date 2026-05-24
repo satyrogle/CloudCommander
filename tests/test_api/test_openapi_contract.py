@@ -79,3 +79,49 @@ def test_actor_claims_header_is_optional_string():
     actor_claims_block = _block(spec, "    XActorClaims:", "    XIdempotencyKey:")
     assert "required: false" in actor_claims_block
     assert "type: string" in actor_claims_block
+
+
+def test_graph_centrality_route_and_schema_are_in_openapi_contract():
+    spec = _read_spec()
+
+    route_block = _block(
+        spec,
+        "  /api/v1/telemetry/graph/centrality:",
+        "  /api/v1/telemetry/nodes/{node_id}/guardrail-state:",
+    )
+    assert "$ref: '#/components/parameters/XTenantId'" in route_block
+    assert "$ref: '#/components/schemas/GraphCentralityNode'" in route_block
+
+    schema_block = _block(spec, "    GraphCentralityNode:", "    GuardrailState:")
+    assert "additionalProperties: false" in schema_block
+    for field_name in ("node_id", "centrality_score", "rank"):
+        assert f"        - {field_name}" in schema_block
+        assert f"        {field_name}:" in schema_block
+
+
+def test_hardening_telemetry_contract_exposes_ema_and_reconciler_state():
+    spec = _read_spec()
+
+    backpressure_block = _block(spec, "    BackpressureTelemetry:", "    ReconcilerTelemetry:")
+    for field_name in (
+        "raw_arrival_rate_hz",
+        "raw_service_rate_hz",
+        "raw_utilization_rho",
+        "ema_arrival_rate_hz",
+        "ema_service_rate_hz",
+        "ema_utilization_rho",
+    ):
+        assert f"        - {field_name}" in backpressure_block
+        assert f"        {field_name}:" in backpressure_block
+
+    reconciler_route = _block(
+        spec,
+        "  /api/v1/telemetry/system/reconciler:",
+        "  /api/v1/telemetry/graph/centrality:",
+    )
+    assert "$ref: '#/components/schemas/ReconcilerTelemetry'" in reconciler_route
+
+    reconciler_schema = _block(spec, "    ReconcilerTelemetry:", "    GraphCentralityNode:")
+    for field_name in ("state", "recent_failure_count", "opened_at", "next_retry_at"):
+        assert f"        - {field_name}" in reconciler_schema
+        assert f"        {field_name}:" in reconciler_schema

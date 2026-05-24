@@ -42,6 +42,18 @@ class EventRepository:
             return 0, None
         return int(record["sequence_id"]), record["event_hash"]
 
+    async def has_idempotency_key(
+        self, conn: asyncpg.Connection, tenant_id: UUID, idempotency_key: str
+    ) -> bool:
+        query = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM events
+                WHERE tenant_id = $1 AND idempotency_key = $2
+            )
+        """
+        return bool(await conn.fetchval(query, tenant_id, idempotency_key))
+
     async def _append_event_and_enqueue_with_conn(
         self, conn: asyncpg.Connection, envelope: EventEnvelope
     ) -> None:

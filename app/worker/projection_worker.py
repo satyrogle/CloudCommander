@@ -323,6 +323,19 @@ class OutboxWorker:
         source_event: EventEnvelope,
         strategy_id: str,
     ) -> None:
+        compensation_key = f"compensation-{source_event.event_id}"
+        rollback_key = f"rollback-{source_event.event_id}"
+        if await self.repository.has_idempotency_key(
+            conn, source_event.tenant_id, compensation_key
+        ) or await self.repository.has_idempotency_key(
+            conn, source_event.tenant_id, rollback_key
+        ):
+            logger.info(
+                "Compensation saga already emitted for source event %s; skipping duplicates.",
+                source_event.event_id,
+            )
+            return
+
         head_sequence, _ = await self.repository.get_stream_head(
             conn, source_event.tenant_id, source_event.aggregate_id
         )
@@ -335,7 +348,7 @@ class OutboxWorker:
             aggregate_id=source_event.aggregate_id,
             sequence_id=base_sequence + 1,
             timestamp_utc_ms=now_ms,
-            idempotency_key=f"compensation-{source_event.event_id}",
+            idempotency_key=compensation_key,
             actor_id="worker-compensator",
             actor_claims=["admin"],
             expected_version=base_sequence,
@@ -354,7 +367,7 @@ class OutboxWorker:
             aggregate_id=source_event.aggregate_id,
             sequence_id=base_sequence + 2,
             timestamp_utc_ms=now_ms + 1,
-            idempotency_key=f"rollback-{source_event.event_id}",
+            idempotency_key=rollback_key,
             actor_id="worker-compensator",
             actor_claims=["admin"],
             expected_version=base_sequence + 1,

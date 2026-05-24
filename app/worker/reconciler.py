@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+from app.control.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from app.control.maut_rollback import RollbackDecisionEngine
 from app.infrastructure.adapters.base import CloudAdapter
 
@@ -14,30 +15,37 @@ DEFAULT_MAUT_WEIGHTS = {
     "infrastructure_cost_normalized": 0.2,
 }
 
+reconciler_circuit_breaker = CircuitBreaker()
+
 
 class ReconcilerLoop:
     def __init__(
         self,
         adapter: CloudAdapter,
         decision_engine: RollbackDecisionEngine | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ):
         self.adapter = adapter
         self.decision_engine = decision_engine or RollbackDecisionEngine(weights=DEFAULT_MAUT_WEIGHTS)
+        self.circuit_breaker = circuit_breaker or reconciler_circuit_breaker
 
     async def execute_intent(self, event_id: str, aggregate_id: str, payload: Dict[str, Any]) -> str:
         logger.info("Reconciler dispatching intent for %s", aggregate_id)
 
-        result = await self.adapter.apply_allocation(aggregate_id, payload)
+        result = await self._call_adapter(self.adapter.apply_allocation, aggregate_id, payload)
         self.decision_engine.observe_evidence(result["status"])
 
         if result["status"] == "success":
             logger.info("Intent %s succeeded.", event_id)
+            await self.circuit_breaker.record_success()
             return "completed"
 
         if result["status"] == "partial_failure":
+            await self.circuit_breaker.record_failure()
             return await self._handle_partial_failure(event_id, aggregate_id, result)
 
         if result["status"] in ["throttled", "timeout"]:
+            await self.circuit_breaker.record_failure()
             logger.warning(
                 "Intent %s hit transient failure: %s. Will retry via outbox.",
                 event_id,
@@ -45,19 +53,22 @@ class ReconcilerLoop:
             )
             raise Exception(f"Transient adapter failure: {result['status']}")
 
+        await self.circuit_breaker.record_failure()
         return "failed"
 
     async def execute_rollback(self, event_id: str, aggregate_id: str, payload: Dict[str, Any]) -> str:
         logger.info("Reconciler dispatching rollback for %s", aggregate_id)
 
-        result = await self.adapter.rollback_allocation(aggregate_id, payload)
+        result = await self._call_adapter(self.adapter.rollback_allocation, aggregate_id, payload)
         self.decision_engine.observe_evidence(result["status"])
 
         if result["status"] == "success":
             logger.info("Rollback %s succeeded.", event_id)
+            await self.circuit_breaker.record_success()
             return "rollback_completed"
 
         if result["status"] in ["throttled", "timeout"]:
+            await self.circuit_breaker.record_failure()
             logger.warning(
                 "Rollback %s hit transient failure: %s. Will retry via outbox.",
                 event_id,
@@ -65,7 +76,18 @@ class ReconcilerLoop:
             )
             raise Exception(f"Transient adapter failure: {result['status']}")
 
+        await self.circuit_breaker.record_failure()
         return "failed"
+
+    async def _call_adapter(self, func, aggregate_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        await self.circuit_breaker.before_call()
+        try:
+            return await func(aggregate_id, payload)
+        except CircuitBreakerOpenError:
+            raise
+        except Exception:
+            await self.circuit_breaker.record_failure()
+            raise
 
     async def _handle_partial_failure(
         self, event_id: str, aggregate_id: str, context: Dict[str, Any]

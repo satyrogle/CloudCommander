@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.control.backpressure_manager import BackpressureManager
+from app.control.token_bucket import TokenBucketRateLimiter
 
 backpressure_manager = BackpressureManager(window_seconds=60, limit_rho=0.95)
+token_bucket_limiter = TokenBucketRateLimiter(
+    rate_per_minute=float(os.getenv("TOKEN_BUCKET_RATE_PER_MINUTE", "60")),
+    burst_capacity=float(os.getenv("TOKEN_BUCKET_BURST_CAPACITY", "20")),
+)
 
 
 class BackpressureMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             if request.method in {"POST", "PUT", "DELETE", "PATCH"}:
+                tenant_id = request.headers.get("x-tenant-id")
+                if tenant_id is not None:
+                    allowed = await token_bucket_limiter.allow(tenant_id)
+                    if not allowed:
+                        return JSONResponse(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            content={
+                                "detail": "Tenant write burst limit exceeded. Retry shortly."
+                            },
+                        )
+
                 is_overloaded = await backpressure_manager.is_overloaded()
                 if is_overloaded:
                     return JSONResponse(
