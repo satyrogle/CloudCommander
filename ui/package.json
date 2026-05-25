@@ -1,0 +1,31 @@
+{
+  "name": "cloudcommander-ui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@xstate/react": "^5.0.5",
+    "d3-force": "^3.0.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.2.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reactflow": "^11.11.4",
+    "recharts": "^2.12.7",
+    "xstate": "^5.13.0"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.2.6",
+    "typescript": "^5.5.3"
+  }
+}
