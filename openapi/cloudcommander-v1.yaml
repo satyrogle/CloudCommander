@@ -265,6 +265,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/GuardrailState'
 
+  /api/v1/telemetry/events:
+    get:
+      summary: Return normalized control-plane telemetry events
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: source
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventSource'
+        - in: query
+          name: severity
+          required: false
+          schema:
+            $ref: '#/components/schemas/EventSeverity'
+      responses:
+        '200':
+          description: Normalized telemetry events list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TelemetryEvent'
+
   /api/v1/telemetry/events/recent:
     get:
       summary: Return latest control-loop events
@@ -621,3 +654,40 @@ components:
         timestamp_utc_ms:
           type: integer
           minimum: 0
+
+    EventSeverity:
+      type: string
+      enum: [INFO, WARNING, CRITICAL]
+
+    EventSource:
+      type: string
+      enum: [PID, CIRCUIT_BREAKER, TOKEN_BUCKET, SYSTEM]
+
+    TelemetryEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - timestamp
+        - source
+        - severity
+        - type
+        - message
+        - metadata
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          $ref: '#/components/schemas/EventSource'
+        severity:
+          $ref: '#/components/schemas/EventSeverity'
+        type:
+          type: string
+        message:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true

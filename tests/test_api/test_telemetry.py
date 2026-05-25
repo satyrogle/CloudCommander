@@ -26,9 +26,10 @@ class _FakePool:
 
 
 class _FakeConn:
-    def __init__(self, nodes, edges):
+    def __init__(self, nodes, edges, events=None):
         self.nodes = nodes
         self.edges = edges
+        self.events = events or []
 
     async def fetch(self, query, tenant_id):
         _ = tenant_id
@@ -39,6 +40,8 @@ class _FakeConn:
                 {"source_node_id": source, "target_node_id": target}
                 for source, target in self.edges
             ]
+        if "FROM events" in query:
+            return self.events
         raise AssertionError(f"Unexpected query: {query}")
 
 
@@ -142,3 +145,77 @@ def test_reconciler_telemetry_returns_circuit_breaker_state(monkeypatch):
         "opened_at": 1000.0,
         "next_retry_at": 1120.0,
     }
+
+
+def test_telemetry_events_endpoint_returns_normalized_events():
+    app.state.db_pool = _FakePool(
+        _FakeConn(
+            nodes=[],
+            edges=[],
+            events=[
+                {
+                    "event_id": str(uuid4()),
+                    "event_type": "GuardrailThresholdBreached",
+                    "payload": {"severity": "warning", "reason": "PID drift observed"},
+                    "timestamp_utc_ms": 1710000000000,
+                },
+                {
+                    "event_id": str(uuid4()),
+                    "event_type": "CompensationStrategySelected",
+                    "payload": {"selected_strategy": "full_revert"},
+                    "timestamp_utc_ms": 1710000001000,
+                },
+            ],
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/telemetry/events",
+        headers={"x-tenant-id": str(uuid4())},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    assert body[0]["source"] == "CIRCUIT_BREAKER"
+    assert body[0]["severity"] == "CRITICAL"
+    assert body[1]["source"] == "PID"
+    assert body[1]["severity"] == "WARNING"
+    assert "message" in body[0]
+    assert "metadata" in body[1]
+
+
+def test_telemetry_events_endpoint_supports_server_side_filters():
+    app.state.db_pool = _FakePool(
+        _FakeConn(
+            nodes=[],
+            edges=[],
+            events=[
+                {
+                    "event_id": str(uuid4()),
+                    "event_type": "GuardrailThresholdBreached",
+                    "payload": {"severity": "warning", "reason": "Minor drift"},
+                    "timestamp_utc_ms": 1710000000000,
+                },
+                {
+                    "event_id": str(uuid4()),
+                    "event_type": "RollbackInitiated",
+                    "payload": {"reason_code": "auto-compensation"},
+                    "timestamp_utc_ms": 1710000005000,
+                },
+            ],
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/telemetry/events?source=PID&severity=WARNING",
+        headers={"x-tenant-id": str(uuid4())},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["source"] == "PID"
+    assert body[0]["severity"] == "WARNING"

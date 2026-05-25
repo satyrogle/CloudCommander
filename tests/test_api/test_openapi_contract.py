@@ -109,6 +109,31 @@ def test_graph_centrality_route_and_schema_are_in_openapi_contract():
         assert f"        {field_name}:" in schema_block
 
 
+def test_telemetry_events_route_and_schema_are_in_openapi_contract():
+    spec = _read_spec()
+
+    route_block = _block(
+        spec,
+        "  /api/v1/telemetry/events:",
+        "  /api/v1/telemetry/events/recent:",
+    )
+    assert "$ref: '#/components/parameters/XTenantId'" in route_block
+    assert "name: source" in route_block
+    assert "name: severity" in route_block
+    assert "$ref: '#/components/schemas/TelemetryEvent'" in route_block
+
+    source_schema = _block(spec, "    EventSource:", "    TelemetryEvent:")
+    assert "PID" in source_schema
+    assert "CIRCUIT_BREAKER" in source_schema
+    assert "TOKEN_BUCKET" in source_schema
+    assert "SYSTEM" in source_schema
+
+    event_schema = _block(spec, "    TelemetryEvent:")
+    for field_name in ("id", "timestamp", "source", "severity", "type", "message", "metadata"):
+        assert f"        - {field_name}" in event_schema
+        assert f"        {field_name}:" in event_schema
+
+
 def test_hardening_telemetry_contract_exposes_ema_and_reconciler_state():
     spec = _read_spec()
 

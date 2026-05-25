@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, Query
 from app.api.dependencies import get_db_pool, get_tenant_id
 from app.api.middleware import backpressure_manager
 from app.control.graph_centrality import calculate_eigenvector_centrality
+from app.domain.telemetry_schemas import EventSeverity, EventSource, TelemetryEvent
 from app.domain.schemas import BackpressureTelemetry, GraphCentralityNode, ReconcilerTelemetry
+from app.infrastructure.telemetry.normalizer import normalize_control_plane_event
 from app.worker.reconciler import reconciler_circuit_breaker
 
 router = APIRouter(prefix="/api/v1/telemetry", tags=["Telemetry"])
@@ -112,3 +114,38 @@ async def get_recent_controller_events(
         records = await conn.fetch(query, tenant_id, limit)
 
     return [dict(r) for r in records]
+
+
+@router.get("/events", response_model=list[TelemetryEvent])
+async def get_telemetry_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    source: EventSource | None = Query(default=None),
+    severity: EventSeverity | None = Query(default=None),
+    tenant_id: UUID = Depends(get_tenant_id),
+    pool: Any = Depends(get_db_pool),
+):
+    query = """
+        SELECT event_id, event_type, payload, timestamp_utc_ms
+        FROM events
+        WHERE tenant_id = $1
+          AND event_type IN (
+            'CompensationStrategySelected',
+            'GuardrailThresholdBreached',
+            'ExternalDriftResolved',
+            'RollbackInitiated'
+          )
+        ORDER BY sequence_id DESC
+        LIMIT 200
+    """
+    async with pool.acquire() as conn:
+        records = await conn.fetch(query, tenant_id)
+
+    normalized_events = [normalize_control_plane_event(dict(record)) for record in records]
+
+    if source is not None:
+        normalized_events = [event for event in normalized_events if event.source == source]
+    if severity is not None:
+        normalized_events = [event for event in normalized_events if event.severity == severity]
+
+    normalized_events.sort(key=lambda event: event.timestamp, reverse=True)
+    return normalized_events[:limit]
