@@ -74,7 +74,7 @@ async def run() -> None:
 
     migrations_dir = Path(__file__).resolve().parent
     print(f"Connecting to database: {dsn}")
-    conn = await asyncpg.connect(dsn)
+    conn = await asyncpg.connect(dsn, statement_cache_size=0)
     try:
         applied = await apply_migrations(conn, migrations_dir)
     finally:

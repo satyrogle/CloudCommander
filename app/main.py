@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
             min_size=1,
             max_size=10,
             command_timeout=30,
+            statement_cache_size=0,
             init=configure_json_codecs,
         )
         logger.info("Database pool initialized.")
