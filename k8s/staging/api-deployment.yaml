@@ -43,13 +43,13 @@ spec:
                 name: cloudcommander-config
           readinessProbe:
             httpGet:
-              path: /docs
+              path: /healthz
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /docs
+              path: /healthz
               port: 8080
             initialDelaySeconds: 20
             periodSeconds: 20

@@ -15,6 +15,19 @@ def test_lifespan_skips_pool_when_flag_enabled(monkeypatch):
         assert app.state.db_pool is None
 
 
+def test_healthz_is_lightweight_and_hidden_from_schema(monkeypatch):
+    monkeypatch.setenv("SKIP_DB_POOL_INIT", "1")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+        openapi = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert "/healthz" not in openapi.json()["paths"]
+
+
 def test_lifespan_closes_pool_on_shutdown(monkeypatch):
     class FakePool:
         def __init__(self):

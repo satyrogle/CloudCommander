@@ -46,6 +46,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CloudCommander API", lifespan=lifespan)
 app.add_middleware(BackpressureMiddleware)
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    return {"status": "ok"}
+
+
 app.include_router(commands_router)
 app.include_router(projections_router)
 
