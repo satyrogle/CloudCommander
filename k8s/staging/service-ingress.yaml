@@ -21,10 +21,10 @@ metadata:
     kubernetes.io/ingress.class: nginx
 spec:
   tls:
-    - hosts: ["staging-api.cloudcommander.example.com"]
+    - hosts: ["localhost"]
       secretName: cloudcommander-api-tls
   rules:
-    - host: staging-api.cloudcommander.example.com
+    - host: localhost
       http:
         paths:
           - path: /
