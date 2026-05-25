@@ -10,7 +10,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: jakeyy8/cloudcommander-api:34174f2
+          image: jakeyy8/cloudcommander-api:8bc7fc4
           command: ["python", "-m", "migrations.run"]
           env:
             - name: DATABASE_URL
