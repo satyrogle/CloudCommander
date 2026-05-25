@@ -20,8 +20,8 @@ spec:
     spec:
       initContainers:
         - name: run-migrations
-          image: jakeyy8/cloudcommander:staging
-          imagePullPolicy: Always
+          image: jakeyy8/cloudcommander-worker:staging
+          imagePullPolicy: IfNotPresent
           command: ["python", "-m", "migrations.run"]
           envFrom:
             - secretRef:
@@ -30,8 +30,8 @@ spec:
                 name: cloudcommander-config
       containers:
         - name: worker
-          image: jakeyy8/cloudcommander:staging
-          imagePullPolicy: Always
+          image: jakeyy8/cloudcommander-worker:staging
+          imagePullPolicy: IfNotPresent
           command: ["python", "-m", "app.worker.projection_worker"]
           envFrom:
             - secretRef:

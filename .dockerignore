@@ -9,3 +9,5 @@ docs
 *.pdf
 *.docx
 cloudcommander.patch
+.env.staging
+.env.*
