@@ -21,7 +21,7 @@ spec:
       initContainers:
         - name: run-migrations
           image: jakeyy8/cloudcommander:staging
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["python", "-m", "migrations.run"]
           envFrom:
             - secretRef:
@@ -31,7 +31,7 @@ spec:
       containers:
         - name: api
           image: jakeyy8/cloudcommander:staging
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["uvicorn"]
           args: ["app.main:app", "--host", "0.0.0.0", "--port", "8080"]
           ports:
