@@ -45,10 +45,25 @@ export type BlastRadiusNodeData = {
   cpuCores: number;
   memoryGb: number;
   lastSequenceId: number;
+  adapterHealth?: AdapterHealth | null;
 };
 
 export type TelemetrySnapshot = {
   nodes: Node<BlastRadiusNodeData>[];
   edges: Edge[];
   backpressure: BackpressureTelemetry | null;
+};
+
+export type EventSeverity = "INFO" | "WARNING" | "CRITICAL";
+export type EventSource = "PID" | "CIRCUIT_BREAKER" | "TOKEN_BUCKET" | "SYSTEM";
+export type AdapterHealth = "UP" | "DEGRADED" | "DOWN";
+
+export type TelemetryEvent = {
+  id: string;
+  timestamp: string;
+  source: EventSource;
+  severity: EventSeverity;
+  type: string;
+  message: string;
+  metadata: Record<string, unknown>;
 };

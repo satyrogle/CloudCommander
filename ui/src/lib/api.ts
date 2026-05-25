@@ -1,8 +1,10 @@
 import type {
+  AdapterHealth,
   BackpressureTelemetry,
   BlastRadiusNodeData,
   CentralityNode,
   ServiceGraphProjection,
+  TelemetryEvent,
   TelemetrySnapshot
 } from "./types";
 
@@ -40,6 +42,24 @@ async function getJson<T>(path: string, tenantId: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function deriveAdapterHealth(
+  nodeId: string,
+  lifecycleState: string,
+  explicitHealth?: string
+): AdapterHealth | null {
+  if (explicitHealth === "UP" || explicitHealth === "DEGRADED" || explicitHealth === "DOWN") {
+    return explicitHealth;
+  }
+
+  if (!nodeId.toLowerCase().includes("adapter")) {
+    return null;
+  }
+
+  if (lifecycleState === "frozen") return "DOWN";
+  if (lifecycleState === "orphaned" || lifecycleState === "tombstoned") return "DEGRADED";
+  return "UP";
+}
+
 function createFallbackSnapshot(): TelemetrySnapshot {
   const ids = [
     "api-gateway",
@@ -69,7 +89,8 @@ function createFallbackSnapshot(): TelemetrySnapshot {
       lifecycleState: "active",
       cpuCores: id === "postgres" ? 8 : 2,
       memoryGb: id === "postgres" ? 32 : 8,
-      lastSequenceId: 0
+      lastSequenceId: 0,
+      adapterHealth: id === "cloud-adapter" ? "DEGRADED" : null
     } satisfies BlastRadiusNodeData
   }));
 
@@ -119,6 +140,12 @@ export async function fetchTelemetrySnapshot(tenantId: string): Promise<Telemetr
     const nodes = Array.from(nodeIds).map((nodeId) => {
       const projection = projectionByNode.get(nodeId);
       const central = centralityByNode.get(nodeId);
+      const lifecycleState = projection?.lifecycle_state ?? "edge-only";
+      const adapterHealth = deriveAdapterHealth(
+        nodeId,
+        lifecycleState,
+        (projection as unknown as { adapter_health?: string } | undefined)?.adapter_health
+      );
       return {
         id: nodeId,
         type: "centralityNode",
@@ -127,10 +154,11 @@ export async function fetchTelemetrySnapshot(tenantId: string): Promise<Telemetr
           label: nodeId.slice(0, 8),
           centrality: central?.centrality_score ?? 0.1,
           rank: central?.rank ?? nodeIds.size,
-          lifecycleState: projection?.lifecycle_state ?? "edge-only",
+          lifecycleState,
           cpuCores: projection?.cpu_cores ?? 0,
           memoryGb: projection?.memory_gb ?? 0,
-          lastSequenceId: projection?.last_sequence_id ?? 0
+          lastSequenceId: projection?.last_sequence_id ?? 0,
+          adapterHealth
         } satisfies BlastRadiusNodeData
       };
     });
@@ -146,5 +174,29 @@ export async function fetchTelemetrySnapshot(tenantId: string): Promise<Telemetr
     return { nodes, edges, backpressure };
   } catch {
     return createFallbackSnapshot();
+  }
+}
+
+export async function fetchTelemetryEvents(
+  tenantId: string,
+  options: {
+    source?: "ALL" | "PID" | "CIRCUIT_BREAKER" | "TOKEN_BUCKET" | "SYSTEM";
+    severity?: "ALL" | "INFO" | "WARNING" | "CRITICAL";
+    limit?: number;
+  } = {}
+): Promise<TelemetryEvent[]> {
+  if (!tenantId.trim()) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  if (options.source && options.source !== "ALL") params.set("source", options.source);
+  if (options.severity && options.severity !== "ALL") params.set("severity", options.severity);
+  params.set("limit", String(options.limit ?? 50));
+
+  try {
+    return await getJson<TelemetryEvent[]>(`/api/v1/telemetry/events?${params.toString()}`, tenantId);
+  } catch {
+    return [];
   }
 }

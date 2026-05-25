@@ -5,6 +5,7 @@ import { useMachine } from "@xstate/react";
 import { Network, RefreshCw, ShieldAlert } from "lucide-react";
 import { BlastRadiusGraph } from "../components/BlastRadiusGraph";
 import { BackpressurePanel } from "../components/BackpressurePanel";
+import { AlertTimeline } from "../components/AlertTimeline";
 import { telemetryMachine } from "../machines/telemetryMachine";
 
 const defaultTenantId = "00000000-0000-0000-0000-000000000000";
@@ -105,10 +106,13 @@ export default function DashboardPage() {
           </div>
           <BlastRadiusGraph nodes={snapshot.context.nodes} edges={snapshot.context.edges} />
         </div>
-        <BackpressurePanel
-          backpressure={snapshot.context.backpressure}
-          history={history}
-        />
+        <div className="telemetry-rail">
+          <BackpressurePanel
+            backpressure={snapshot.context.backpressure}
+            history={history}
+          />
+          <AlertTimeline tenantId={tenantInput} />
+        </div>
       </section>
     </main>
   );

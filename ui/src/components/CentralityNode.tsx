@@ -8,6 +8,7 @@ export function CentralityNode({ data, selected }: NodeProps<BlastRadiusNodeData
   const diameter = 68 + centrality * 52;
   const danger = centrality >= 0.8;
   const warning = centrality >= 0.55;
+  const status = data.adapterHealth;
 
   const background = danger
     ? "rgba(177, 38, 55, 0.94)"
@@ -26,6 +27,13 @@ export function CentralityNode({ data, selected }: NodeProps<BlastRadiusNodeData
       }}
       title={`Rank ${data.rank}. Centrality ${centrality.toFixed(2)}`}
     >
+      {status ? (
+        <span
+          className={`health-dot ${status.toLowerCase()}`}
+          title={`Adapter health: ${status}`}
+          aria-label={`Adapter health: ${status}`}
+        />
+      ) : null}
       <Handle type="target" position={Position.Top} />
       <div className="node-rank">#{data.rank}</div>
       <div className="node-label">{data.label}</div>
