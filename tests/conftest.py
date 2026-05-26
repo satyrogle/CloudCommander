@@ -22,7 +22,8 @@ TRUNCATE TABLE
     events,
     read_model_nodes,
     read_model_service_graph_edges,
-    read_model_guardrail_alerts
+    read_model_guardrail_alerts,
+    read_model_causality_quarantine
 RESTART IDENTITY
 CASCADE
 """

@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any, Dict
 
-from app.infrastructure.adapters.base import CloudAdapter
+from app.infrastructure.adapters.base import CloudAdapter, LeakyBucketAdapter
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -23,6 +23,8 @@ class MockAWSAdapter(CloudAdapter):
         chaos_x: float | None = None,
         chaos_min_delay_sec: float | None = None,
         chaos_max_delay_sec: float | None = None,
+        egress_rate_hz: float | None = None,
+        egress_burst_capacity: int | None = None,
     ):
         self.chaos_enabled = (
             _env_flag("MOCK_AWS_CHAOS_ENABLED", False)
@@ -41,7 +43,34 @@ class MockAWSAdapter(CloudAdapter):
             if chaos_max_delay_sec is None
             else chaos_max_delay_sec
         )
+        self.egress_rate_hz = (
+            float(os.getenv("MOCK_AWS_EGRESS_RATE_HZ", "10.0"))
+            if egress_rate_hz is None
+            else egress_rate_hz
+        )
+        self.egress_burst_capacity = (
+            int(os.getenv("MOCK_AWS_EGRESS_BURST_CAPACITY", "100"))
+            if egress_burst_capacity is None
+            else egress_burst_capacity
+        )
         self._chaos_lock = asyncio.Lock()
+        self._leaky_bucket = LeakyBucketAdapter(
+            dispatch_rate_hz=self.egress_rate_hz,
+            burst_capacity=self.egress_burst_capacity,
+        )
+        self._started = False
+
+    async def start(self) -> None:
+        if self._started:
+            return
+        await self._leaky_bucket.start()
+        self._started = True
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+        await self._leaky_bucket.stop()
+        self._started = False
 
     async def _next_chaos_value(self) -> float:
         async with self._chaos_lock:
@@ -88,6 +117,13 @@ class MockAWSAdapter(CloudAdapter):
         }
 
     async def apply_allocation(self, aggregate_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._started:
+            return await self._apply_allocation_impl(aggregate_id, payload)
+        return await self._leaky_bucket.execute(self._apply_allocation_impl, aggregate_id, payload)
+
+    async def _apply_allocation_impl(
+        self, aggregate_id: str, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
         _ = aggregate_id
         reason_code = payload.get("reason_code", "")
 
@@ -130,6 +166,13 @@ class MockAWSAdapter(CloudAdapter):
         }
 
     async def rollback_allocation(self, aggregate_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._started:
+            return await self._rollback_allocation_impl(aggregate_id, payload)
+        return await self._leaky_bucket.execute(self._rollback_allocation_impl, aggregate_id, payload)
+
+    async def _rollback_allocation_impl(
+        self, aggregate_id: str, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
         _ = aggregate_id
         reason_code = payload.get("reason_code", "")
 

@@ -62,9 +62,9 @@ class EventRepository:
             INSERT INTO events (
                 event_id, tenant_id, aggregate_id, sequence_id,
                 timestamp_utc_ms, idempotency_key, actor_id,
-                actor_claims, expected_version, event_type, payload,
+                actor_claims, expected_version, vclock, event_type, payload,
                 previous_hash, event_hash
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12, $13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11, $12::jsonb, $13, $14)
         """
 
         outbox_query = """
@@ -105,6 +105,7 @@ class EventRepository:
             envelope.actor_id,
             envelope.actor_claims,
             envelope.expected_version,
+            envelope.vclock,
             envelope.payload.event_type,
             payload_dict,
             previous_hash,
@@ -142,7 +143,7 @@ class EventRepository:
         query = """
             SELECT event_id, tenant_id, aggregate_id, sequence_id,
                    timestamp_utc_ms, idempotency_key, actor_id, actor_claims,
-                   expected_version, payload, previous_hash, event_hash
+                   expected_version, vclock, payload, previous_hash, event_hash
             FROM events
             WHERE tenant_id = $1 AND aggregate_id = $2 AND sequence_id > $3
             ORDER BY sequence_id ASC
@@ -170,7 +171,7 @@ class EventRepository:
         query = """
             SELECT event_id, tenant_id, aggregate_id, sequence_id,
                    timestamp_utc_ms, idempotency_key, actor_id, actor_claims,
-                   expected_version, payload, previous_hash, event_hash
+                   expected_version, vclock, payload, previous_hash, event_hash
             FROM events
             WHERE event_id = $1 AND tenant_id = $2
             LIMIT 1
@@ -195,7 +196,7 @@ class EventRepository:
         self, conn: asyncpg.Connection, tenant_id: UUID, node_id: UUID
     ) -> Optional[ResourceNodeSnapshot]:
         query = """
-            SELECT node_id, lifecycle_state, cpu_cores, memory_gb, last_sequence_id, schema_version
+            SELECT node_id, lifecycle_state, cpu_cores, memory_gb, last_sequence_id, schema_version, vclock
             FROM read_model_nodes
             WHERE tenant_id = $1 AND node_id = $2
         """
@@ -256,14 +257,15 @@ class EventRepository:
     ) -> None:
         query = """
             INSERT INTO read_model_nodes (
-                tenant_id, node_id, lifecycle_state, cpu_cores, memory_gb, last_sequence_id, schema_version, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                tenant_id, node_id, lifecycle_state, cpu_cores, memory_gb, last_sequence_id, schema_version, vclock, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
             ON CONFLICT (tenant_id, node_id) DO UPDATE
             SET lifecycle_state = EXCLUDED.lifecycle_state,
                 cpu_cores = EXCLUDED.cpu_cores,
                 memory_gb = EXCLUDED.memory_gb,
                 last_sequence_id = EXCLUDED.last_sequence_id,
                 schema_version = EXCLUDED.schema_version,
+                vclock = EXCLUDED.vclock,
                 updated_at = NOW()
             WHERE read_model_nodes.last_sequence_id < EXCLUDED.last_sequence_id
         """
@@ -276,6 +278,37 @@ class EventRepository:
             snapshot.memory_gb,
             snapshot.last_sequence_id,
             snapshot.schema_version,
+            snapshot.vclock,
+        )
+
+    async def insert_causality_quarantine(
+        self,
+        conn: asyncpg.Connection,
+        tenant_id: UUID,
+        aggregate_id: UUID,
+        event_id: UUID,
+        sender_id: str,
+        relation: str,
+        incoming_vclock: dict[str, int],
+        current_vclock: dict[str, int],
+        reason: str,
+    ) -> None:
+        query = """
+            INSERT INTO read_model_causality_quarantine (
+                tenant_id, aggregate_id, event_id, sender_id, relation,
+                incoming_vclock, current_vclock, reason
+            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+        """
+        await conn.execute(
+            query,
+            tenant_id,
+            aggregate_id,
+            event_id,
+            sender_id,
+            relation,
+            incoming_vclock,
+            current_vclock,
+            reason,
         )
 
     async def insert_guardrail_alert(
@@ -333,6 +366,7 @@ class EventRepository:
             raw_dict = dict(record)
             raw_dict.pop("previous_hash", None)
             raw_dict.pop("event_hash", None)
+            raw_dict["vclock"] = self._normalize_json(raw_dict.get("vclock") or {})
             raw_dict["payload"] = self._normalize_json(raw_dict["payload"])
             return EventEnvelope.model_validate(raw_dict)
         except ValidationError as e:

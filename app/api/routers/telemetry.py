@@ -10,7 +10,12 @@ from app.api.dependencies import get_db_pool, get_tenant_id
 from app.api.middleware import backpressure_manager
 from app.control.graph_centrality import calculate_eigenvector_centrality
 from app.domain.telemetry_schemas import EventSeverity, EventSource, TelemetryEvent
-from app.domain.schemas import BackpressureTelemetry, GraphCentralityNode, ReconcilerTelemetry
+from app.domain.schemas import (
+    BackpressureTelemetry,
+    GraphCentralityNode,
+    QuarantineEvent,
+    ReconcilerTelemetry,
+)
 from app.infrastructure.telemetry.normalizer import normalize_control_plane_event
 from app.worker.reconciler import reconciler_circuit_breaker
 
@@ -149,3 +154,31 @@ async def get_telemetry_events(
 
     normalized_events.sort(key=lambda event: event.timestamp, reverse=True)
     return normalized_events[:limit]
+
+
+@router.get("/quarantine", response_model=list[QuarantineEvent])
+async def get_causality_quarantine(
+    limit: int = Query(default=100, ge=1, le=500),
+    tenant_id: UUID = Depends(get_tenant_id),
+    pool: Any = Depends(get_db_pool),
+):
+    query = """
+        SELECT
+            quarantine_id,
+            tenant_id,
+            aggregate_id,
+            event_id,
+            sender_id,
+            relation,
+            incoming_vclock,
+            current_vclock,
+            reason,
+            quarantined_at
+        FROM read_model_causality_quarantine
+        WHERE tenant_id = $1
+        ORDER BY quarantined_at DESC
+        LIMIT $2
+    """
+    async with pool.acquire() as conn:
+        records = await conn.fetch(query, tenant_id, limit)
+    return [dict(record) for record in records]

@@ -321,6 +321,69 @@ paths:
                 items:
                   $ref: '#/components/schemas/RecentControllerEvent'
 
+  /api/v1/telemetry/quarantine:
+    get:
+      summary: Return quarantined causal-conflict events
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Quarantine events list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QuarantineEvent'
+
+  /api/v1/control/quarantine/{quarantine_id}/resolve:
+    post:
+      summary: Resolve a quarantined causal-conflict event
+      parameters:
+        - $ref: '#/components/parameters/XTenantId'
+        - $ref: '#/components/parameters/XActorId'
+        - $ref: '#/components/parameters/XRole'
+        - $ref: '#/components/parameters/XActorClaims'
+        - in: path
+          name: quarantine_id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuarantineResolveRequest'
+      responses:
+        '200':
+          description: Quarantine event resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuarantineResolveResponse'
+        '403':
+          description: Tenant admin claim required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMap'
+        '404':
+          description: Quarantine event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMap'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -691,3 +754,87 @@ components:
         metadata:
           type: object
           additionalProperties: true
+
+    QuarantineEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - quarantine_id
+        - tenant_id
+        - aggregate_id
+        - event_id
+        - sender_id
+        - relation
+        - incoming_vclock
+        - current_vclock
+        - reason
+        - quarantined_at
+      properties:
+        quarantine_id:
+          type: integer
+          minimum: 1
+        tenant_id:
+          type: string
+          format: uuid
+        aggregate_id:
+          type: string
+          format: uuid
+        event_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+        relation:
+          type: string
+        incoming_vclock:
+          type: object
+          additionalProperties:
+            type: integer
+        current_vclock:
+          type: object
+          additionalProperties:
+            type: integer
+        reason:
+          type: string
+        quarantined_at:
+          type: string
+          format: date-time
+
+    QuarantineResolveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum: [DISCARD, RETRY_FORCE]
+
+    QuarantineResolveResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - action
+        - quarantine_id
+        - event_id
+        - aggregate_id
+        - requeued
+      properties:
+        status:
+          type: string
+          enum: [resolved]
+        action:
+          type: string
+          enum: [DISCARD, RETRY_FORCE]
+        quarantine_id:
+          type: integer
+          minimum: 1
+        event_id:
+          type: string
+          format: uuid
+        aggregate_id:
+          type: string
+          format: uuid
+        requeued:
+          type: boolean

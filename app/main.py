@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from app.api.middleware import BackpressureMiddleware
 from app.api.routers.commands import router as commands_router
+from app.api.routers.control import router as control_router
 from app.api.routers.projections import router as projections_router
 from app.api.routers.telemetry import router as telemetry_router
 from app.infrastructure.asyncpg_codecs import configure_json_codecs
@@ -54,6 +55,7 @@ async def healthz():
 
 
 app.include_router(commands_router)
+app.include_router(control_router)
 app.include_router(projections_router)
 
 app.include_router(telemetry_router)

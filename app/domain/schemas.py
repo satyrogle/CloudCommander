@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any, Dict, Literal, Union
 from uuid import UUID
 
@@ -99,6 +100,7 @@ class EventEnvelope(DomainBaseModel):
     actor_id: str = Field(min_length=1)
     actor_claims: list[str] = Field(default_factory=list)
     expected_version: int = Field(ge=0)
+    vclock: dict[str, int] = Field(default_factory=dict)
     payload: EventPayload
 
 
@@ -109,6 +111,7 @@ class ResourceNodeSnapshot(DomainBaseModel):
     memory_gb: float = Field(ge=0.0, le=1024.0)
     last_sequence_id: int = Field(ge=0)
     schema_version: int = Field(default=1, ge=1)
+    vclock: dict[str, int] = Field(default_factory=dict)
 
     @field_validator("cpu_cores", "memory_gb")
     @classmethod
@@ -177,3 +180,20 @@ class ReconcilerTelemetry(DomainBaseModel):
     recent_failure_count: int = Field(ge=0)
     opened_at: float | None = None
     next_retry_at: float | None = None
+
+
+class QuarantineEvent(DomainBaseModel):
+    quarantine_id: int = Field(ge=1)
+    tenant_id: UUID
+    aggregate_id: UUID
+    event_id: UUID
+    sender_id: str = Field(min_length=1)
+    relation: str = Field(min_length=1)
+    incoming_vclock: dict[str, int] = Field(default_factory=dict)
+    current_vclock: dict[str, int] = Field(default_factory=dict)
+    reason: str = Field(min_length=1)
+    quarantined_at: datetime
+
+
+class QuarantineResolveRequest(DomainBaseModel):
+    action: Literal["DISCARD", "RETRY_FORCE"]

@@ -25,6 +25,7 @@ from app.domain.schemas import (
 from app.infrastructure.adapters.mock_aws import MockAWSAdapter
 from app.infrastructure.asyncpg_codecs import configure_json_codecs
 from app.infrastructure.repository import DataCorruptionError, EventRepository
+from app.security.causality import CausalRelation, compare_vector_clocks
 from app.worker.reconciler import ReconcilerLoop
 
 logger = logging.getLogger(__name__)
@@ -70,21 +71,38 @@ class OutboxWorker:
         self.pool = pool
         self.repository = EventRepository(pool)
         self.reconciler = ReconcilerLoop(MockAWSAdapter())
+        self._adapter_started = False
+
+    async def _start_adapter_lifecycle(self) -> None:
+        if self._adapter_started:
+            return
+        await self.reconciler.adapter.start()
+        self._adapter_started = True
+
+    async def _stop_adapter_lifecycle(self) -> None:
+        if not self._adapter_started:
+            return
+        await self.reconciler.adapter.stop()
+        self._adapter_started = False
 
     async def run(self, stop_event: asyncio.Event | None = None) -> None:
         if stop_event is None:
             stop_event = asyncio.Event()
 
+        await self._start_adapter_lifecycle()
         logger.info("Starting outbox worker loop")
-        while not stop_event.is_set():
-            try:
-                processed_any = await self.process_next_batch()
-                if not processed_any:
+        try:
+            while not stop_event.is_set():
+                try:
+                    processed_any = await self.process_next_batch()
+                    if not processed_any:
+                        await asyncio.sleep(POLL_INTERVAL_SEC)
+                except Exception as exc:  # safeguard loop
+                    logger.exception("Worker loop error: %s", exc)
                     await asyncio.sleep(POLL_INTERVAL_SEC)
-            except Exception as exc:  # safeguard loop
-                logger.exception("Worker loop error: %s", exc)
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-        logger.info("Outbox worker loop stopped.")
+            logger.info("Outbox worker loop stopped.")
+        finally:
+            await self._stop_adapter_lifecycle()
 
     async def process_next_batch(self, batch_size: int = 10) -> bool:
         claim_query = """
@@ -117,7 +135,7 @@ class OutboxWorker:
                 last_attempt_at = NOW()
             FROM claimed
             WHERE outbox.event_id = claimed.event_id
-            RETURNING outbox.event_id, outbox.tenant_id, outbox.attempts;
+            RETURNING outbox.event_id, outbox.tenant_id, outbox.attempts, outbox.payload;
         """
 
         async with self.pool.acquire() as conn:
@@ -140,6 +158,8 @@ class OutboxWorker:
         event_id: UUID = row["event_id"]
         tenant_id: UUID = row["tenant_id"]
         attempts: int = row["attempts"]
+        outbox_payload = row.get("payload") if isinstance(row, dict) else row["payload"]
+        force_causal_apply = bool((outbox_payload or {}).get("force_causal_apply", False))
 
         try:
             async with self.pool.acquire() as conn:
@@ -149,8 +169,33 @@ class OutboxWorker:
                         f"Missing event {event_id} for tenant {tenant_id} referenced by outbox."
                     )
 
+                causal_relation, current_vclock = await self._evaluate_projection_causality(
+                    conn, event, force_causal_apply=force_causal_apply
+                )
                 guardrail_state = self._observe_guardrail_state(event)
-                reconcile_status, reconcile_error = await self._evaluate_reconcile(event)
+                if causal_relation == CausalRelation.STALE:
+                    logger.info(
+                        "Dropping stale event %s for aggregate %s",
+                        event.event_id,
+                        event.aggregate_id,
+                    )
+                    reconcile_status, reconcile_error = "causal_stale_drop", None
+                elif causal_relation == CausalRelation.GAP:
+                    reconcile_status, reconcile_error = (
+                        "causal_gap",
+                        (
+                            "Causal gap detected for aggregate "
+                            f"{event.aggregate_id}. Postponing execution."
+                        ),
+                    )
+                elif causal_relation == CausalRelation.CONCURRENT:
+                    logger.critical(
+                        "Concurrent split-brain mutation quarantined for aggregate %s",
+                        event.aggregate_id,
+                    )
+                    reconcile_status, reconcile_error = "causal_concurrent_quarantined", None
+                else:
+                    reconcile_status, reconcile_error = await self._evaluate_reconcile(event)
                 compensation_strategy = self._extract_compensation_strategy(reconcile_status)
                 should_apply_projection = self._should_apply_projection(
                     reconcile_status, reconcile_error
@@ -183,6 +228,19 @@ class OutboxWorker:
                             metric_value=guardrail_state["metric_value"],
                             reason=guardrail_state["reason"],
                             timestamp_utc_ms=guardrail_state["timestamp_utc_ms"],
+                        )
+
+                    if causal_relation == CausalRelation.CONCURRENT:
+                        await self.repository.insert_causality_quarantine(
+                            conn=conn,
+                            tenant_id=tenant_id,
+                            aggregate_id=event.aggregate_id,
+                            event_id=event.event_id,
+                            sender_id=event.actor_id,
+                            relation=causal_relation.value,
+                            incoming_vclock=event.vclock,
+                            current_vclock=current_vclock,
+                            reason="Concurrent split-brain mutation detected.",
                         )
 
                     if self._should_mark_processed(reconcile_status, reconcile_error):
@@ -295,6 +353,33 @@ class OutboxWorker:
                 return "retry_scheduled", str(exc)
         return "not_applicable", None
 
+    async def _evaluate_projection_causality(
+        self,
+        conn: asyncpg.Connection,
+        event: EventEnvelope,
+        *,
+        force_causal_apply: bool = False,
+    ) -> tuple[CausalRelation | None, dict[str, int]]:
+        if not isinstance(
+            event.payload,
+            (ResourceAllocationRequested, AggregateFrozen, ExternalDriftResolved),
+        ):
+            return None, {}
+        # Backward-compatibility path for pre-vector-clock events.
+        if not event.vclock:
+            return None, {}
+        if force_causal_apply:
+            return CausalRelation.NEXT_EXPECTED, {}
+
+        snapshot = await self.repository.get_node_projection(conn, event.tenant_id, event.aggregate_id)
+        current_vclock = snapshot.vclock if snapshot is not None else {}
+        relation = compare_vector_clocks(
+            v_incoming=event.vclock,
+            v_current=current_vclock,
+            sender_id=event.actor_id,
+        )
+        return relation, current_vclock
+
     def _extract_compensation_strategy(self, reconcile_status: str) -> Optional[str]:
         prefix = "compensating_via_"
         if not reconcile_status.startswith(prefix):
@@ -314,7 +399,13 @@ class OutboxWorker:
     ) -> bool:
         if reconcile_error is not None:
             return False
-        return reconcile_status in {"completed", "rollback_completed", "not_applicable"} or (
+        return reconcile_status in {
+            "completed",
+            "rollback_completed",
+            "not_applicable",
+            "causal_stale_drop",
+            "causal_concurrent_quarantined",
+        } or (
             self._extract_compensation_strategy(reconcile_status) is not None
         )
 
@@ -388,6 +479,7 @@ class OutboxWorker:
             UPDATE outbox
             SET status = 'processed',
                 processed_at = NOW(),
+                payload = '{}'::jsonb,
                 error_payload = jsonb_build_object('reconcile_status', $2::text)
             WHERE event_id = $1
             """,
@@ -410,6 +502,7 @@ class OutboxWorker:
             """
             UPDATE outbox
             SET status = $1,
+                payload = '{}'::jsonb,
                 error_payload = jsonb_build_object('error', $2::text)
             WHERE event_id = $3
             """,

@@ -31,12 +31,13 @@ def reduce_node(
             cpu_cores=0.0,
             memory_gb=0.0,
             last_sequence_id=0,
+            vclock={},
         )
 
     if envelope.sequence_id <= state.last_sequence_id:
         return state
 
-    updates = {"last_sequence_id": envelope.sequence_id}
+    updates = {"last_sequence_id": envelope.sequence_id, "vclock": envelope.vclock}
 
     if isinstance(payload, ResourceAllocationRequested):
         verify_permission(envelope.actor_claims, "allocate", envelope.aggregate_id)

@@ -160,3 +160,56 @@ def test_hardening_telemetry_contract_exposes_ema_and_reconciler_state():
     for field_name in ("state", "recent_failure_count", "opened_at", "next_retry_at"):
         assert f"        - {field_name}" in reconciler_schema
         assert f"        {field_name}:" in reconciler_schema
+
+
+def test_quarantine_routes_and_schemas_are_in_openapi_contract():
+    spec = _read_spec()
+
+    quarantine_route = _block(
+        spec,
+        "  /api/v1/telemetry/quarantine:",
+        "  /api/v1/control/quarantine/{quarantine_id}/resolve:",
+    )
+    assert "$ref: '#/components/parameters/XTenantId'" in quarantine_route
+    assert "$ref: '#/components/schemas/QuarantineEvent'" in quarantine_route
+
+    resolve_route = _block(
+        spec,
+        "  /api/v1/control/quarantine/{quarantine_id}/resolve:",
+        "components:",
+    )
+    for expected_ref in (
+        "$ref: '#/components/parameters/XTenantId'",
+        "$ref: '#/components/parameters/XActorId'",
+        "$ref: '#/components/parameters/XRole'",
+        "$ref: '#/components/parameters/XActorClaims'",
+    ):
+        assert expected_ref in resolve_route
+    assert "$ref: '#/components/schemas/QuarantineResolveRequest'" in resolve_route
+    assert "$ref: '#/components/schemas/QuarantineResolveResponse'" in resolve_route
+
+    quarantine_schema = _block(
+        spec,
+        "    QuarantineEvent:",
+        "    QuarantineResolveRequest:",
+    )
+    for field_name in (
+        "quarantine_id",
+        "tenant_id",
+        "aggregate_id",
+        "event_id",
+        "sender_id",
+        "relation",
+        "incoming_vclock",
+        "current_vclock",
+        "reason",
+        "quarantined_at",
+    ):
+        assert f"        - {field_name}" in quarantine_schema
+
+    resolve_schema = _block(
+        spec,
+        "    QuarantineResolveRequest:",
+        "    QuarantineResolveResponse:",
+    )
+    assert "enum: [DISCARD, RETRY_FORCE]" in resolve_schema

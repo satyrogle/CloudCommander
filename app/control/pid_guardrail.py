@@ -4,6 +4,8 @@ import logging
 import time
 from dataclasses import dataclass
 
+from app.control.kalman_filter import SystemUtilizationFilter
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,12 +34,24 @@ class TriangleFuzzySet:
 class PIDGuardrailController:
     """Observe-only PID controller for resource trajectory monitoring."""
 
-    def __init__(self, kp: float, ki: float, kd: float, setpoint: float):
+    def __init__(
+        self,
+        kp: float,
+        ki: float,
+        kd: float,
+        setpoint: float,
+        *,
+        kalman_process_noise: float = 0.005,
+        kalman_measurement_noise: float = 0.05,
+    ):
         self.kp = kp
         self.ki = ki
         self.kd = kd
         self.setpoint = setpoint
+        self.kalman_process_noise = kalman_process_noise
+        self.kalman_measurement_noise = kalman_measurement_noise
         self._state_by_aggregate: dict[str, dict[str, float]] = {}
+        self._filter_by_aggregate: dict[str, SystemUtilizationFilter] = {}
         self._instability_sets = {
             "stable": TriangleFuzzySet(0.0, 0.0, 0.35),
             "drifting": TriangleFuzzySet(0.2, 0.55, 0.95),
@@ -52,10 +66,21 @@ class PIDGuardrailController:
             "degree": 1.0,
             "membership": {"stable": 1.0, "drifting": 0.0, "volatile": 0.0},
             "control_signal_abs": 0.0,
+            "filtered_utilization": 0.0,
+            "raw_utilization": 0.0,
         }
 
     def observe_resource_change(self, current_utilization: float, aggregate_id: str) -> float:
         current_time = time.time()
+        utilization_filter = self._filter_by_aggregate.setdefault(
+            aggregate_id,
+            SystemUtilizationFilter(
+                process_noise=self.kalman_process_noise,
+                measurement_noise=self.kalman_measurement_noise,
+            ),
+        )
+        smoothed_utilization = utilization_filter.feed_measurement(current_utilization)
+
         state = self._state_by_aggregate.setdefault(
             aggregate_id,
             {
@@ -68,12 +93,14 @@ class PIDGuardrailController:
         if dt <= 0:
             dt = 1e-4
 
-        error = self.setpoint - current_utilization
+        error = self.setpoint - smoothed_utilization
         state["integral"] += error * dt
         derivative = (error - state["previous_error"]) / dt
 
         u_t = (self.kp * error) + (self.ki * state["integral"]) + (self.kd * derivative)
         fuzzy_state = self.classify_instability(u_t)
+        fuzzy_state["filtered_utilization"] = smoothed_utilization
+        fuzzy_state["raw_utilization"] = current_utilization
         self._latest_state_by_aggregate[aggregate_id] = fuzzy_state
         self._latest_state = fuzzy_state
 
@@ -81,8 +108,13 @@ class PIDGuardrailController:
         state["last_time"] = current_time
 
         logger.info(
-            "[PID Observe] Aggregate: %s | u(t): %.4f | Error: %.4f | State: %s(%.2f)",
+            (
+                "[PID Observe] Aggregate: %s | raw: %.4f | filtered: %.4f | "
+                "u(t): %.4f | Error: %.4f | State: %s(%.2f)"
+            ),
             aggregate_id,
+            current_utilization,
+            smoothed_utilization,
             u_t,
             error,
             fuzzy_state["label"],
